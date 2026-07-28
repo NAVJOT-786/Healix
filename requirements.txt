@@ -1,0 +1,7 @@
+google-generativeai
+kubernetes
+python-dotenv
+requests
+rich
+docker
+psycopg2-binary
