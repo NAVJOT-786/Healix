@@ -469,7 +469,7 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Healing Agent — Login</title>
+<title>Healix — Login</title>
 <style>
   :root {
     --bg: #0a0e17; --surface: rgba(22,27,34,0.75); --border: rgba(48,54,61,0.6);
@@ -525,7 +525,7 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
       <circle cx="24" cy="24" r="22" stroke="rgba(88,166,255,0.3)" stroke-width="2"/>
       <path d="M16 24l6 6 10-12" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    <h1>AI Healing Agent</h1>
+    <h1>Healix</h1>
     <p>Dashboard Login</p>
   </div>
   <form id="loginForm" onsubmit="return doLogin(event)">
@@ -585,7 +585,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Healing Agent — Dashboard</title>
+<title>Healix — Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -1010,7 +1010,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <header class="hdr">
   <div class="hdr-brand">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
-    <h1>AI Healer <span>v9</span></h1>
+    <h1>Healix <span>v9</span></h1>
   </div>
   <div class="hdr-sep"></div>
   <div class="hdr-status">
@@ -2196,7 +2196,7 @@ p {{ color: #666; font-size: 14px; }}
 <div class="badge">{action.upper()}</div>
 <p>{req.target.get('name', 'Unknown')} &mdash; {req.location}</p>
 <p>Action: <strong>{req.action}</strong></p>
-<div class="meta">Approval ID: {approval_id}<br>AI Healing Agent v9</div>
+<div class="meta">Approval ID: {approval_id}<br>Healix v9</div>
 </div></body></html>"""
         self._respond_html(200, html)
 
