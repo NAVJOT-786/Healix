@@ -93,8 +93,8 @@ def _email_sections(*sections: tuple[str, str, str]) -> str:
     return html
 
 
-def _email_footer(agent_version: str = "v9") -> str:
-    return f'<div class="footer">Sent by AI Healing Agent {agent_version} (Multi-Provider) - Dry-run: {"ON" if DRY_RUN else "OFF"}</div></div></body></html>'
+def _email_footer(agent_version: str = "") -> str:
+    return f'<div class="footer">Healix - Dry-run: {"ON" if DRY_RUN else "OFF"}</div></div></body></html>'
 
 
 # ── Dev alert email ──────────────────────────────────────────────────────────
@@ -199,7 +199,7 @@ def send_infra_report_email(
     )
     if cost_data:
         html += _email_sections(("Cost Impact", cost_data, "cost-box"))
-    html += '<div class="footer">Sent by AI Healing Agent v9 (Multi-Provider) - Mode: REPORT ONLY (no actions executed)</div></div></body></html>'
+    html += '<div class="footer">Healix - Mode: REPORT ONLY (no actions executed)</div></div></body></html>'
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"[Issue Detected] {issue_type} - {target_name} ({location}) - action recommended"
@@ -227,7 +227,7 @@ def send_self_heal_email(restarted_at: str) -> None:
         f'\n<tr><td>Recovery method</td><td>Watchdog auto-restart</td></tr>')
     html += _email_sections(
         ("What happened",
-         "The AI Healing Agent process crashed or became unresponsive. "
+         "The Healix process crashed or became unresponsive. "
          "The watchdog sidecar detected the failure and automatically restarted the agent. "
          "No manual intervention was required.",
          "value"),
@@ -235,10 +235,10 @@ def send_self_heal_email(restarted_at: str) -> None:
          "Agent is running and actively monitoring containers. All systems operational.",
          "value"),
     )
-    html += '<div class="footer">Sent by AI Healing Agent v9 (self-heal notification)</div></div></body></html>'
+    html += '<div class="footer">Healix (self-heal notification)</div></div></body></html>'
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"[Self-Healed] AI Healing Agent restarted itself on {hostname}"
+    msg["Subject"] = f"[Self-Healed] Healix restarted itself on {hostname}"
     msg["From"] = EMAIL_FROM
     msg["To"] = ", ".join(all_recipients)
     msg.attach(MIMEText(html, "html"))
@@ -425,6 +425,101 @@ def send_approval_rejected_email(
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html, "html"))
     _smtp_send(recipients, msg, "approval-rejected")
+
+
+# ── User welcome email ────────────────────────────────────────────────────────
+
+def send_welcome_email(email: str, username: str, password: str) -> None:
+    recipients = [email]
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f9; margin: 0; padding: 20px; }}
+.card {{ background: #fff; border-radius: 12px; padding: 36px 40px; max-width: 520px; margin: 40px auto; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }}
+.logo {{ text-align: center; margin-bottom: 24px; }}
+.logo svg {{ width: 48px; height: 48px; }}
+.logo h1 {{ font-size: 22px; color: #1a1a2e; margin: 8px 0 0; letter-spacing: -0.5px; }}
+.badge {{ display: inline-block; background: #27ae6020; color: #27ae60; border-radius: 20px; padding: 4px 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }}
+h2 {{ font-size: 18px; color: #1a1a2e; margin: 0 0 4px; }}
+p {{ color: #555; font-size: 14px; line-height: 1.6; margin: 6px 0; }}
+.creds {{ background: #f0f4ff; border: 1px solid #d0d9f0; border-radius: 10px; padding: 20px; margin: 20px 0; }}
+.creds-item {{ display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e0e6f0; }}
+.creds-item:last-child {{ border-bottom: none; }}
+.creds-label {{ color: #666; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }}
+.creds-value {{ color: #1a1a2e; font-size: 15px; font-weight: 700; font-family: 'Courier New', monospace; }}
+.steps {{ background: #fafafa; border-radius: 10px; padding: 20px; margin: 20px 0; }}
+.step {{ display: flex; gap: 12px; margin-bottom: 12px; }}
+.step:last-child {{ margin-bottom: 0; }}
+.step-num {{ width: 24px; height: 24px; background: #27ae60; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }}
+.step-text {{ font-size: 14px; color: #333; line-height: 1.5; }}
+.warning {{ background: #fff8e6; border-left: 4px solid #f39c12; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #7d6608; margin: 20px 0; }}
+.footer {{ margin-top: 28px; font-size: 12px; color: #aaa; border-top: 1px solid #eee; padding-top: 14px; text-align: center; }}
+</style></head><body><div class="card">
+<div class="logo">
+<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+<circle cx="24" cy="24" r="22" stroke="#27ae60" stroke-width="2"/>
+<path d="M16 24l6 6 10-12" stroke="#27ae60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+<h1>Healix</h1>
+</div>
+<div style="text-align:center"><span class="badge">Account Created</span></div>
+<h2 style="text-align:center">Welcome to Healix!</h2>
+<p style="text-align:center">Your autonomous infrastructure healing account is ready.</p>
+
+<div class="creds">
+<div class="creds-item"><span class="creds-label">Username</span><span class="creds-value">{username}</span></div>
+<div class="creds-item"><span class="creds-label">Password</span><span class="creds-value">{password}</span></div>
+</div>
+
+<div class="steps">
+<div class="step"><span class="step-num">1</span><span class="step-text">Go to the <strong>Healix Dashboard</strong> at your server address</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-text">Login with your <strong>username</strong> and <strong>password</strong> above</span></div>
+<div class="step"><span class="step-num">3</span><span class="step-text">Change your password in the <strong>User Settings</strong> after first login</span></div>
+</div>
+
+<div class="warning">⚠️ For security, please change your password after first login. Keep these credentials private.</div>
+
+<div class="footer">Healix — Autonomous Infrastructure Healing</div>
+</div></body></html>"""
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Welcome to Healix — Your Account Has Been Created"
+    msg["From"] = EMAIL_FROM
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(html, "html"))
+    _smtp_send(recipients, msg, "user-welcome")
+
+
+# ── Password reset email ──────────────────────────────────────────────────────
+
+def send_password_reset_email(email: str, reset_link: str) -> None:
+    recipients = [email]
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    html = _email_head(
+        "Healix — Password Reset Request",
+        "#e67e22", "PASSWORD RESET", "#e67e22",
+    )
+    html += f"""
+<div class="section">
+  <div class="label">Reset Your Password</div>
+  <div class="value" style="margin-top:8px">
+    Click the button below to reset your password. This link expires in 1 hour.
+  </div>
+  <div style="margin:20px 0;text-align:center">
+    <a href="{reset_link}" style="display:inline-block;background:#e67e22;color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-weight:600;font-size:15px">RESET PASSWORD</a>
+  </div>
+</div>"""
+    html += _email_sections(
+        ("Didn't request this?", "If you didn't request a password reset, you can safely ignore this email.", "value"),
+    )
+    html += _email_footer()
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Healix — Password Reset Request"
+    msg["From"] = EMAIL_FROM
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(html, "html"))
+    _smtp_send(recipients, msg, "password-reset")
 
 
 # ── n8n Notifier ─────────────────────────────────────────────────────────────

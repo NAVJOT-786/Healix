@@ -34,7 +34,10 @@ from config import (
     SMTP_HOST, SMTP_PORT, SMTP_PASSWORD,
     DIAGNOSIS_PROVIDER_CHAIN, WATCH_EVENTS_ENABLED,
     DASHBOARD_USER, DASHBOARD_PASSWORD,
+    APPROVAL_DASHBOARD_URL,
 )
+from storage import StorageBackend
+from notifications import send_welcome_email, send_password_reset_email
 
 log = logging.getLogger("observability")
 
@@ -427,38 +430,64 @@ _dashboard_config = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 _SESSION_EXPIRY_SEC = 8 * 3600  # 8 hours
-_sessions: dict[str, float] = {}  # token -> expiry timestamp
+_sessions: dict[str, dict] = {}  # token -> {expiry, username, perms}
 
 
-def _generate_session_token() -> str:
+def _generate_session_token(username: str, perms: dict) -> str:
     token = secrets.token_urlsafe(32)
-    _sessions[token] = time.time() + _SESSION_EXPIRY_SEC
+    _sessions[token] = {
+        "expiry": time.time() + _SESSION_EXPIRY_SEC,
+        "username": username,
+        "perms": perms,
+    }
     return token
 
 
-def _validate_session(cookie_header: str) -> bool:
+def _validate_session(cookie_header: str) -> dict | None:
     if not cookie_header:
-        return False
+        return None
     now = time.time()
     for part in cookie_header.split(";"):
         kv = part.strip().split("=", 1)
         if len(kv) == 2 and kv[0] == "session_id":
             token = kv[1]
-            expiry = _sessions.get(token)
-            if expiry and expiry > now:
-                return True
-            elif expiry:
+            data = _sessions.get(token)
+            if data and data["expiry"] > now:
+                return data
+            elif data:
                 del _sessions[token]
-            return False
-    return False
+            return None
+    return None
+
+
+def _check_perm(cookie_header: str, perm: str) -> bool:
+    session = _validate_session(cookie_header)
+    return bool(session and session.get("perms", {}).get(perm, False))
 
 
 def _prune_sessions() -> None:
     now = time.time()
-    expired = [t for t, exp in _sessions.items() if exp <= now]
+    expired = [t for t, data in _sessions.items() if data["expiry"] <= now]
     for t in expired:
         del _sessions[t]
 
+def _refresh_user_sessions(user_id: int) -> None:
+    if not _storage:
+        return
+    users = _storage.list_users()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if not target:
+        return
+    new_perms = {
+        "can_view_dashboard": target.get("can_view_dashboard", False),
+        "can_view_pods": target.get("can_view_pods", False),
+        "can_view_approvals": target.get("can_view_approvals", False),
+        "can_approve": target.get("can_approve", False),
+        "can_admin": target.get("can_admin", False),
+    }
+    for s in _sessions.values():
+        if s.get("username") == target["username"]:
+            s["perms"] = new_perms
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  LOGIN PAGE HTML
@@ -539,6 +568,9 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
     </div>
     <div class="login-error" id="loginError"></div>
     <button type="submit" class="login-btn">Sign In</button>
+    <div style="margin-top:16px;text-align:center">
+      <a href="/forgot" style="color:var(--text2);font-size:13px;text-decoration:none">Forgot Password?</a>
+    </div>
   </form>
 </div>
 <script>
@@ -575,6 +607,136 @@ function doLogin(e) {
 </body>
 </html>"""
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FORGOT PASSWORD PAGE HTML
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FORGOT_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Healix — Forgot Password</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0a0e17; color: #e6edf3; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .card { background: rgba(22,27,34,0.75); border: 1px solid rgba(48,54,61,0.6); border-radius: 12px; padding: 40px; width: 420px; backdrop-filter: blur(12px); }
+  h1 { font-size: 20px; margin-bottom: 4px; color: #e6edf3; }
+  p.sub { color: #8b949e; font-size: 14px; margin-bottom: 24px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 500; color: #8b949e; margin-bottom: 4px; }
+  .field input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(48,54,61,0.6); background: rgba(13,17,23,0.8); color: #e6edf3; font-size: 14px; outline: none; }
+  .field input:focus { border-color: #58a6ff; }
+  .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; background: #1f6feb; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+  .btn:hover { background: #388bfd; }
+  .msg { background: rgba(63,185,80,0.15); color: #3fb950; padding: 12px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+  .error { background: rgba(248,81,73,0.15); color: #f85149; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+  .back { display: block; text-align: center; margin-top: 16px; color: #8b949e; font-size: 13px; text-decoration: none; }
+  .back:hover { color: #58a6ff; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Reset Password</h1>
+  <p class="sub">Enter your email and we'll send you a reset link</p>
+  <div class="msg" id="forgotMsg"></div>
+  <div class="error" id="forgotError"></div>
+  <form id="forgotForm" onsubmit="return doForgot(event)">
+    <div class="field">
+      <label for="f_email">Email</label>
+      <input type="email" id="f_email" required autofocus>
+    </div>
+    <button type="submit" class="btn">Send Reset Link</button>
+  </form>
+  <a href="/login" class="back">Back to Login</a>
+</div>
+<script>
+function doForgot(e) {
+  e.preventDefault();
+  var msgEl = document.getElementById('forgotMsg');
+  var errEl = document.getElementById('forgotError');
+  msgEl.style.display = 'none'; errEl.style.display = 'none';
+  var em = document.getElementById('f_email').value;
+  fetch('/forgot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'email='+encodeURIComponent(em)
+  }).then(function(r){return r.json();}).then(function(j){
+    if (j.ok) { msgEl.textContent = 'If that email exists, a reset link has been sent.'; msgEl.style.display = 'block'; }
+    else { errEl.textContent = j.error || 'Something went wrong'; errEl.style.display = 'block'; }
+  }).catch(function(){ errEl.textContent = 'Connection failed'; errEl.style.display = 'block'; });
+  return false;
+}
+</script>
+</body>
+</html>"""
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RESET PASSWORD PAGE HTML
+# ══════════════════════════════════════════════════════════════════════════════
+
+_RESET_HTML_PREFIX = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Healix — Reset Password</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0a0e17; color: #e6edf3; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .card { background: rgba(22,27,34,0.75); border: 1px solid rgba(48,54,61,0.6); border-radius: 12px; padding: 40px; width: 420px; backdrop-filter: blur(12px); }
+  h1 { font-size: 20px; margin-bottom: 4px; color: #e6edf3; }
+  p.sub { color: #8b949e; font-size: 14px; margin-bottom: 24px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 500; color: #8b949e; margin-bottom: 4px; }
+  .field input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(48,54,61,0.6); background: rgba(13,17,23,0.8); color: #e6edf3; font-size: 14px; outline: none; }
+  .field input:focus { border-color: #58a6ff; }
+  .btn { width: 100%; padding: 10px; border: none; border-radius: 8px; background: #1f6feb; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+  .btn:hover { background: #388bfd; }
+  .error { background: rgba(248,81,73,0.15); color: #f85149; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Set New Password</h1>
+  <p class="sub">Enter your new password below</p>
+  <div class="error" id="resetError"></div>
+  <form id="resetForm" onsubmit="return doReset(event)">
+    <div class="field">
+      <label for="r_password">New Password</label>
+      <input type="password" id="r_password" required minlength="6">
+    </div>
+    <div class="field">
+      <label for="r_confirm">Confirm Password</label>
+      <input type="password" id="r_confirm" required minlength="6">
+    </div>
+    <input type="hidden" id="r_token" value="__TOKEN__">
+    <button type="submit" class="btn">Update Password</button>
+  </form>
+</div>
+<script>
+function doReset(e) {
+  e.preventDefault();
+  var errEl = document.getElementById('resetError');
+  errEl.style.display = 'none';
+  var p = document.getElementById('r_password').value;
+  var c = document.getElementById('r_confirm').value;
+  if (p !== c) { errEl.textContent = 'Passwords do not match'; errEl.style.display = 'block'; return false; }
+  var token = document.getElementById('r_token').value;
+  fetch('/reset/' + encodeURIComponent(token), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'password=' + encodeURIComponent(p)
+  }).then(function(r){return r.json();}).then(function(j){
+    if (j.ok) { window.location.href = '/login'; }
+    else { errEl.textContent = j.error || 'Reset failed'; errEl.style.display = 'block'; }
+  }).catch(function(){ errEl.textContent = 'Connection failed'; errEl.style.display = 'block'; });
+  return false;
+}
+</script>
+</body>
+</html>"""
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  HTML DASHBOARD
@@ -658,6 +820,9 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .tab-btn.active { color: var(--blue); background: rgba(88,166,255,0.1); }
   .tab-btn.active::after { content: ''; position: absolute; bottom: -10px; left: 16px; right: 16px; height: 2px; background: var(--blue); border-radius: 1px; }
   .tab-badge { display: inline-block; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 8px; margin-left: 4px; min-width: 16px; text-align: center; }
+  .perm-tog { display: inline-block; padding: 3px 10px; margin: 2px 3px; border-radius: 12px; font-size: 11px; font-weight: 500; cursor: pointer; border: 1px solid; transition: all 0.15s; user-select: none; }
+  .perm-tog:hover { opacity: 0.85; transform: scale(1.04); }
+  .perm-tog.active { box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
 
   /* ── Main Content ──────────────────────────────── */
   .main { padding-top: 76px; padding-bottom: 40px; width: 100%; padding-left: 20px; padding-right: 20px; }
@@ -1010,7 +1175,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <header class="hdr">
   <div class="hdr-brand">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
-    <h1>Healix <span>v9</span></h1>
+    <h1>Healix</h1>
   </div>
   <div class="hdr-sep"></div>
   <div class="hdr-status">
@@ -1032,7 +1197,9 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       <button class="tab-btn" data-tab="timeline">Timeline</button>
       <button class="tab-btn" data-tab="llm">LLM</button>
 <button class="tab-btn" data-tab="metrics">Metrics</button>
-<button class="tab-btn" data-tab="approvals">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
+<button class="tab-btn" data-tab="approvals" id="approvals-tab">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
+<button class="tab-btn" data-tab="users" id="users-tab" style="display:none">Users</button>
+      <button class="tab-btn" onclick="logout()" style="color:var(--red);margin-left:8px">Logout</button>
     </nav>
   </div>
 </header>
@@ -1208,6 +1375,13 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="tab-panel" id="panel-users">
+      <div class="panel full-panel">
+        <div class="panel-title">User Management</div>
+        <div id="users-list"><div class="approval-empty">Loading users...</div></div>
+      </div>
+    </div>
+
   </div>
 </main>
 
@@ -1220,9 +1394,9 @@ var CONFIG = __CONFIG__;
 var COLORS = ['green','blue','purple','yellow','orange','cyan','red'];
 var PROVIDER_COLORS = {groq:'green',cerebras:'purple',gemini:'blue',mistral:'cyan',openrouter:'orange',ollama:'yellow'};
 var ROUTE_COLORS = {auto_healed:'green',dev_issue:'red',needs_escalation:'yellow',rollback:'orange',needs_approval:'orange',rejected:'red'};
-var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals'];
+var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users'];
 
-var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview';
+var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true;
 var _prevStats = {heals:0,calls:0,rollbacks:0,pdb:0,errors:0};
 var _prevDiagCount = 0, _latencyHistory = {}, _allRecs = [], _spRecId = null;
 var _timelineFilter = 'all';
@@ -1230,6 +1404,7 @@ var _diagFilter = {pods:'active', containers:'active'};
 var _approvalFilter = 'active';
 var _statusRendered = false;
 var _knownDiagIds = {};
+var _showCreateForm = false;
 function findRecById(id){
   for(var i=0;i<_allRecs.length;i++){if(_allRecs[i].id===id)return _allRecs[i];}
   return null;
@@ -1285,6 +1460,7 @@ pollStatus();
 setInterval(pollStatus, 30000);
 
 function switchTab(name) {
+  if (name === 'approvals' && !_canViewApprovals) { name = 'overview'; }
   var prev = _selectedTab;
   _selectedTab = name;
   document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===name);});
@@ -1937,6 +2113,13 @@ function doApproval(id, action, btn) {
 }
 
 function fetchApprovals() {
+  if (!_canViewApprovals) {
+    var el = document.getElementById('approvals-list');
+    if (el) el.innerHTML = '<div class="approval-empty">You do not have permission to view this section. Contact an administrator to request access.</div>';
+    var bc = document.getElementById('approval-count');
+    if (bc) bc.style.display = 'none';
+    return;
+  }
   fetch('/approvals').then(function(r){return r.json();}).then(function(d){
     var s = JSON.stringify(d);
     if (s !== JSON.stringify(_lastApprovalsData)) {
@@ -1946,13 +2129,198 @@ function fetchApprovals() {
   }).catch(function(){});
 }
 
+// ── Users tab ──────────────────────────────────────
+function fetchUsers() {
+  fetch('/users').then(function(r){return r.json();}).then(function(d){
+    renderUsers(d.users||[]);
+  }).catch(function(){});
+}
+function renderUsers(users) {
+  var el = document.getElementById('users-list');
+  if (!el) return;
+
+  var focusedEl = document.activeElement;
+  var focusedId = focusedEl && focusedEl.id;
+  var selStart, selEnd;
+  if (focusedId && focusedEl.tagName === 'INPUT') {
+    selStart = focusedEl.selectionStart;
+    selEnd = focusedEl.selectionEnd;
+  }
+
+  var saved = {};
+  if (_showCreateForm) {
+    ['nu-user','nu-email'].forEach(function(id){
+      var inp = document.getElementById(id);
+      if (inp) saved[id] = inp.value;
+    });
+    var permsKeys = ['can_view_dashboard','can_view_pods','can_view_approvals','can_approve','can_admin'];
+    permsKeys.forEach(function(k){
+      var cb = document.getElementById('nu-'+k);
+      if (cb) saved['nu-'+k] = cb.checked;
+    });
+  }
+
+  var html = '<div style="margin-bottom:16px"><button class="tab-btn active" onclick="showCreateUserForm()" style="display:inline-flex;align-items:center;gap:6px">+ Add User</button></div>';
+  html += '<div id="create-user-form" style="display:'+(_showCreateForm?'block':'none')+';background:var(--surface);border:1px solid var(--glass-border);border-radius:8px;padding:20px;margin-bottom:20px">';
+  html += '<div style="font-size:14px;font-weight:600;margin-bottom:12px">Create New User</div>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">';
+  html += '<div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Username</label><input id="nu-user" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--bg);color:var(--text);font-size:13px"></div>';
+  html += '<div><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Email</label><input id="nu-email" type="email" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--glass-border);background:var(--bg);color:var(--text);font-size:13px"></div>';
+  html += '</div>';
+  html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">';
+  var perms = [
+    {key:'can_view_dashboard',label:'View Dashboard'},
+    {key:'can_view_pods',label:'View Pods'},
+    {key:'can_view_approvals',label:'View Approvals'},
+    {key:'can_approve',label:'Can Approve'},
+    {key:'can_admin',label:'Admin'},
+  ];
+  for (var i=0;i<perms.length;i++) {
+    var chk = saved['nu-'+perms[i].key] !== undefined ? saved['nu-'+perms[i].key] : (perms[i].key === 'can_view_dashboard');
+    html += '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" id="nu-'+perms[i].key+'"'+(chk?' checked':'')+'> '+perms[i].label+'</label>';
+  }
+  html += '</div><div style="display:flex;gap:8px">';
+  html += '<button onclick="submitNewUser()" style="padding:8px 20px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">Create User</button>';
+  html += '<button onclick="_showCreateForm=false;document.getElementById(\'create-user-form\').style.display=\'none\'" style="padding:8px 20px;background:transparent;color:var(--text2);border:1px solid var(--glass-border);border-radius:6px;cursor:pointer;font-size:13px">Cancel</button>';
+  html += '</div><div id="nu-error" style="color:var(--red);font-size:13px;margin-top:8px;display:none"></div></div>';
+
+  html += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+  html += '<thead><tr style="border-bottom:1px solid var(--glass-border);color:var(--text2);font-size:12px;text-transform:uppercase;letter-spacing:0.5px">';
+  html += '<th style="text-align:left;padding:8px 12px">Username</th><th style="text-align:left;padding:8px 12px">Email</th><th style="text-align:left;padding:8px 12px">Permissions</th><th style="text-align:left;padding:8px 12px">Created</th><th style="text-align:left;padding:8px 12px"></th>';
+  html += '</tr></thead><tbody>';
+  for (var i=0;i<users.length;i++) {
+    var u = users[i];
+    var permsHtml = '';
+    var allPerms = [
+      {key:'can_view_dashboard', label:'Dashboard', color:'var(--green,#3fb950)'},
+      {key:'can_view_pods', label:'Pods', color:'var(--blue,#58a6ff)'},
+      {key:'can_view_approvals', label:'Approvals', color:'var(--text2,#8b949e)'},
+      {key:'can_approve', label:'Approve', color:'var(--orange,#d29922)'},
+      {key:'can_admin', label:'Admin', color:'var(--purple,#8957e5)'},
+    ];
+    for (var pi=0;pi<allPerms.length;pi++) {
+      var pk = allPerms[pi];
+      var active = u[pk.key] ? ' active' : '';
+      permsHtml += '<span class="perm-tog'+active+'" onclick="togglePerm(this)" data-user="'+u.id+'" data-perm="'+pk.key+'" style="border-color:'+pk.color+';color:'+(u[pk.key]?'#fff':pk.color)+';background:'+(u[pk.key]?pk.color:'transparent')+'">'+pk.label+'</span>';
+    }
+    var created = u.created_at ? u.created_at.split('T')[0] : '';
+    html += '<tr style="border-bottom:1px solid var(--glass-border)">';
+    html += '<td style="padding:10px 12px;font-weight:600">'+u.username+'</td>';
+    html += '<td style="padding:10px 12px;color:var(--text2)">'+u.email+'</td>';
+    html += '<td style="padding:10px 12px">'+permsHtml+'</td>';
+    html += '<td style="padding:10px 12px;color:var(--text2);font-size:12px">'+created+'</td>';
+    html += '<td style="padding:10px 12px;text-align:right"><button onclick="deleteUser('+u.id+')" style="padding:4px 12px;background:var(--red,#f85149);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">Delete</button></td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+
+  if (_showCreateForm) {
+    ['nu-user','nu-email'].forEach(function(id){
+      var inp = document.getElementById(id);
+      if (inp && saved[id] !== undefined) inp.value = saved[id];
+    });
+  }
+
+  if (focusedId) {
+    var el2 = document.getElementById(focusedId);
+    if (el2 && el2.tagName === 'INPUT') {
+      el2.focus();
+      if (selStart !== undefined && selEnd !== undefined) el2.setSelectionRange(selStart, selEnd);
+    }
+  }
+}
+function showCreateUserForm() {
+  _showCreateForm = !_showCreateForm;
+  var f = document.getElementById('create-user-form');
+  if (f) f.style.display = _showCreateForm ? 'block' : 'none';
+}
+function submitNewUser() {
+  var errEl = document.getElementById('nu-error');
+  errEl.style.display = 'none';
+  var u = document.getElementById('nu-user').value;
+  var em = document.getElementById('nu-email').value;
+  if (!u || !em) { errEl.textContent = 'Username and email required'; errEl.style.display = 'block'; return; }
+  var perms = {};
+  perms.can_view_dashboard = document.getElementById('nu-can_view_dashboard').checked;
+  perms.can_view_pods = document.getElementById('nu-can_view_pods').checked;
+  perms.can_view_approvals = document.getElementById('nu-can_view_approvals').checked;
+  perms.can_approve = document.getElementById('nu-can_approve').checked;
+  perms.can_admin = document.getElementById('nu-can_admin').checked;
+  fetch('/users/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username: u, email: em, permissions: perms})
+  }).then(function(r){return r.json();}).then(function(j){
+    if (j.ok) { _showCreateForm=false; fetchUsers(); }
+    else { errEl.textContent = j.error || 'Failed'; errEl.style.display = 'block'; }
+  }).catch(function(){ errEl.textContent = 'Connection failed'; errEl.style.display = 'block'; });
+}
+function deleteUser(id) {
+  if (!confirm('Delete this user?')) return;
+  fetch('/users/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_id: id})
+  }).then(function(r){return r.json();}).then(function(j){
+    if (j.ok) fetchUsers();
+  }).catch(function(){});
+}
+function togglePerm(el) {
+  var active = el.classList.toggle('active');
+  var userId = parseInt(el.dataset.user);
+  var permKey = el.dataset.perm;
+  var color = el.style.borderColor;
+  el.style.color = active ? '#fff' : color;
+  el.style.background = active ? color : 'transparent';
+  var perms = {};
+  perms[permKey] = active;
+  fetch('/users/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_id: userId, permissions: perms})
+  }).catch(function(){});
+}
+function logout() {
+  fetch('/logout', {method:'POST'}).then(function(){
+    window.location.href = '/login';
+  }).catch(function(){
+    window.location.href = '/login';
+  });
+}
+function checkUserPermissions(cb) {
+  fetch('/users/me').then(function(r){
+    if (r.status === 200) return r.json();
+    return null;
+  }).then(function(d){
+    if (d && d.perms) {
+      var p = d.perms;
+      var ut = document.getElementById('users-tab');
+      if (ut) ut.style.display = p.can_admin ? '' : 'none';
+      var at = document.getElementById('approvals-tab');
+      if (at) {
+        _canViewApprovals = p.can_view_approvals || false;
+        at.style.display = _canViewApprovals ? '' : 'none';
+      }
+      if (!_canViewApprovals && _selectedTab === 'approvals') {
+        switchTab('overview');
+      }
+    }
+    if (cb) cb();
+  }).catch(function(){if (cb) cb();});
+}
+
 function poll() {
+  checkUserPermissions(function() {
+    fetchApprovals();
+    if (_selectedTab === 'users') fetchUsers();
+  });
   fetch('/metrics/api').then(function(r){return r.json();}).then(function(d){_lastMetricsData=d; snapshotMetrics(d); update(d); buildAllMetricCharts(d,_lastDiagsData);}).catch(function(){});
   fetch('/diagnoses').then(function(r){return r.json();}).then(function(d){_lastDiagsData=d.records||[]; renderDiagnoses(_lastDiagsData); if(_lastMetricsData) buildAllMetricCharts(_lastMetricsData,_lastDiagsData);}).catch(function(){});
-  fetchApprovals();
 }
 poll();
 setInterval(poll,5000);
+setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
 </script>
 </body>
 </html>"""
@@ -2012,13 +2380,54 @@ class _HealthHandler(BaseHTTPRequestHandler):
             else:
                 self._respond(503, {"status": "unhealthy", "last_heartbeat_age_sec": round(age, 1)})
 
+        elif self.path == "/login" or self.path == "/":
+            self._respond_html(200, _LOGIN_HTML)
+
+        elif self.path == "/forgot":
+            self._respond_html(200, _FORGOT_HTML)
+
+        elif self.path.startswith("/reset/") and len(self.path) > len("/reset/"):
+            token = self.path.split("/reset/")[1].split("/")[0]
+            if _storage:
+                user = _storage.verify_reset_token(token)
+                if user:
+                    html = _RESET_HTML_PREFIX.replace("__TOKEN__", token)
+                    self._respond_html(200, html)
+                else:
+                    self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Invalid or Expired Link</h2><p style='color:#8b949e'>This password reset link is invalid or has expired.</p><a href='/forgot' style='color:#58a6ff'>Request a new one</a></div></body></html>")
+            else:
+                self._respond(404, {"error": "not found"})
+
         elif self.path == "/status" and METRICS_ENABLED:
             service_status.check_all()
             self._respond(200, service_status.to_dict())
 
+        elif self.path == "/users/me":
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if session:
+                self._respond(200, {
+                    "username": session["username"],
+                    "perms": session["perms"],
+                })
+            else:
+                self._respond(401, {"error": "unauthorized"})
+
+        elif self.path == "/users" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _check_perm(cookie, "can_admin"):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if _storage:
+                users = _storage.list_users()
+                self._respond(200, {"users": users})
+            else:
+                self._respond(200, {"users": []})
+
         elif self.path == "/metrics" and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")
-            if not _validate_session(cookie):
+            session = _validate_session(cookie)
+            if not session:
                 self._respond_html(200, _LOGIN_HTML)
                 return
             body = _DASHBOARD_HTML.replace("__CONFIG__", json.dumps(_dashboard_config)).encode()
@@ -2077,8 +2486,12 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/approvals" and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")
-            if not _validate_session(cookie):
+            session = _validate_session(cookie)
+            if not session:
                 self._respond(401, {"error": "unauthorized"})
+                return
+            if not session["perms"].get("can_view_approvals", False):
+                self._respond(401, {"error": "forbidden"})
                 return
             if _approval_store:
                 body = json.dumps(_approval_store.to_dict()).encode()
@@ -2114,27 +2527,60 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 })
 
         elif self.path.startswith("/approve/") and len(self.path) > len("/approve/"):
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_approve", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
             approval_id = self.path.split("/approve/")[1].split("/")[0]
             self._handle_approval_link(approval_id, "approve")
 
         elif self.path.startswith("/reject/") and len(self.path) > len("/reject/"):
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_approve", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
             approval_id = self.path.split("/reject/")[1].split("/")[0]
             self._handle_approval_link(approval_id, "reject")
 
         else:
             self._respond(404, {"error": "not found"})
 
+    def _read_body(self) -> dict:
+        try:
+            cl = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(cl).decode("utf-8", errors="replace")
+            ct = self.headers.get("Content-Type", "")
+            if "application/json" in ct:
+                return json.loads(raw)
+            else:
+                params = urllib.parse.parse_qs(raw)
+                return {k: v[0] for k, v in params.items()}
+        except Exception:
+            return {}
+
     def do_POST(self) -> None:
         if self.path == "/login":
-            content_length = int(self.headers.get("Content-Length", 0))
-            raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
-            params = urllib.parse.parse_qs(raw)
-            username = params.get("username", [""])[0]
-            password = params.get("password", [""])[0]
+            data = self._read_body()
+            username = data.get("username", "").strip()
+            password = data.get("password", "").strip()
 
-            if username == DASHBOARD_USER and password == DASHBOARD_PASSWORD:
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+
+            user = _storage.verify_password(username, password)
+            if user:
                 _prune_sessions()
-                token = _generate_session_token()
+                perms = {
+                    "can_view_dashboard": user.get("can_view_dashboard", True),
+                    "can_view_pods": user.get("can_view_pods", False),
+                    "can_view_approvals": user.get("can_view_approvals", False),
+                    "can_approve": user.get("can_approve", False),
+                    "can_admin": user.get("can_admin", False),
+                }
+                token = _generate_session_token(username, perms)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Strict")
@@ -2145,7 +2591,120 @@ class _HealthHandler(BaseHTTPRequestHandler):
             else:
                 self._respond(401, {"error": "Invalid username or password"})
 
+        elif self.path == "/logout":
+            cookie = self.headers.get("Cookie", "")
+            if cookie:
+                for part in cookie.split(";"):
+                    kv = part.strip().split("=", 1)
+                    if len(kv) == 2 and kv[0] == "session_id":
+                        _sessions.pop(kv[1], None)
+            self.send_response(200)
+            self.send_header("Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+            body = json.dumps({"ok": True}).encode()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        elif self.path == "/forgot":
+            data = self._read_body()
+            email = data.get("email", "").strip()
+            if not email or not _storage:
+                self._respond(200, {"ok": True})  # Don't reveal if email exists
+                return
+            token = _storage.set_reset_token(email)
+            if token:
+                host = self.headers.get("Host", f"localhost:{HEALTH_PORT}")
+                reset_link = f"http://{host}/reset/{token}"
+                send_password_reset_email(email, reset_link)
+            self._respond(200, {"ok": True})
+
+        elif self.path.startswith("/reset/") and len(self.path) > len("/reset/"):
+            token = self.path.split("/reset/")[1].split("/")[0]
+            data = self._read_body()
+            password = data.get("password", "").strip()
+            if not password or len(password) < 6:
+                self._respond(400, {"error": "Password must be at least 6 characters"})
+                return
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+            user = _storage.verify_reset_token(token)
+            if user:
+                _storage.update_password(user["id"], password)
+                _storage.clear_reset_token(user["id"])
+                self._respond(200, {"ok": True})
+            else:
+                self._respond(400, {"error": "Invalid or expired reset token"})
+
+        elif self.path == "/users/create" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _check_perm(cookie, "can_admin"):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            data = self._read_body()
+            username = data.get("username", "").strip()
+            email = data.get("email", "").strip()
+            perms = data.get("permissions", {})
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+            if not username or not email:
+                self._respond(400, {"error": "Username and email required"})
+                return
+            import secrets as _secrets
+            rand_password = _secrets.token_urlsafe(12)
+            user = _storage.create_user(
+                username=username, email=email, password=rand_password,
+                can_view_dashboard=perms.get("can_view_dashboard", True),
+                can_view_pods=perms.get("can_view_pods", False),
+                can_view_approvals=perms.get("can_view_approvals", False),
+                can_approve=perms.get("can_approve", False),
+                can_admin=perms.get("can_admin", False),
+            )
+            if user:
+                send_welcome_email(email, username, rand_password)
+                self._respond(200, {"ok": True})
+            else:
+                self._respond(400, {"error": "Username or email already exists"})
+
+        elif self.path == "/users/delete" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_admin", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            data = self._read_body()
+            user_id = data.get("user_id")
+            if not user_id or not _storage:
+                self._respond(400, {"error": "Invalid request"})
+                return
+            _storage.delete_user(int(user_id))
+            self._respond(200, {"ok": True})
+
+        elif self.path == "/users/update" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _check_perm(cookie, "can_admin"):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            data = self._read_body()
+            user_id = data.get("user_id")
+            permissions = data.get("permissions", {})
+            if not user_id or not permissions or not _storage:
+                self._respond(400, {"error": "Invalid request"})
+                return
+            if not _storage.update_user_permissions(int(user_id), **permissions):
+                self._respond(400, {"error": "User not found"})
+                return
+            _refresh_user_sessions(int(user_id))
+            self._respond(200, {"ok": True})
+
         elif self.path.startswith("/approve/") and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_approve", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
             approval_id = self.path.split("/approve/")[1].strip("/").split("?")[0].split("#")[0]
             log.info("[APPROVE] Dashboard approve requested for id=%s", approval_id)
             if _approval_store and _approval_store.approve(approval_id, by="dashboard"):
@@ -2156,6 +2715,11 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 self._respond(400, {"ok": False, "error": "Approval not found or already processed"})
 
         elif self.path.startswith("/reject/") and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_approve", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
             approval_id = self.path.split("/reject/")[1].strip("/").split("?")[0].split("#")[0]
             log.info("[REJECT] Dashboard reject requested for id=%s", approval_id)
             if _approval_store and _approval_store.reject(approval_id, by="dashboard"):
@@ -2196,7 +2760,7 @@ p {{ color: #666; font-size: 14px; }}
 <div class="badge">{action.upper()}</div>
 <p>{req.target.get('name', 'Unknown')} &mdash; {req.location}</p>
 <p>Action: <strong>{req.action}</strong></p>
-<div class="meta">Approval ID: {approval_id}<br>Healix v9</div>
+<div class="meta">Approval ID: {approval_id}<br>Healix</div>
 </div></body></html>"""
         self._respond_html(200, html)
 

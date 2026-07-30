@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import uuid
+import bcrypt
 import psycopg2
 import psycopg2.pool
 import psycopg2.extras
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 log = logging.getLogger("healer.storage")
@@ -82,6 +84,21 @@ class StorageBackend:
                     details     JSONB,
                     created_at  TIMESTAMPTZ DEFAULT NOW()
                 );
+                CREATE TABLE IF NOT EXISTS users (
+                    id              SERIAL PRIMARY KEY,
+                    username        TEXT UNIQUE NOT NULL,
+                    email           TEXT UNIQUE NOT NULL,
+                    password_hash   TEXT NOT NULL,
+                    can_view_dashboard BOOLEAN DEFAULT TRUE,
+                    can_view_pods   BOOLEAN DEFAULT FALSE,
+                    can_view_approvals BOOLEAN DEFAULT FALSE,
+                    can_approve     BOOLEAN DEFAULT FALSE,
+                    can_admin       BOOLEAN DEFAULT FALSE,
+                    reset_token     TEXT,
+                    reset_token_expiry TIMESTAMPTZ,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ DEFAULT NOW()
+                );
                 ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE;
                 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE;
                 CREATE INDEX IF NOT EXISTS idx_diagnoses_route ON diagnoses(route);
@@ -90,6 +107,20 @@ class StorageBackend:
                 CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_id);
             """)
             conn.commit()
+
+            cur.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+            if cur.fetchone()[0] == 0:
+                pwh = bcrypt.hashpw(b"sharry786", bcrypt.gensalt()).decode()
+                cur.execute("""
+                    INSERT INTO users (username, email, password_hash,
+                        can_view_dashboard, can_view_pods, can_view_approvals,
+                        can_approve, can_admin)
+                    VALUES (%s, %s, %s, TRUE, TRUE, TRUE, TRUE, TRUE)
+                    ON CONFLICT (username) DO NOTHING
+                """, ("admin", "admin@healix.local", pwh))
+                conn.commit()
+                log.info("Default admin user seeded (admin / sharry786)")
+
             log.info("Database migrated — tables ready")
         except Exception as e:
             log.error("Migration failed: %s", e)
@@ -366,5 +397,181 @@ class StorageBackend:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT %s", (limit,))
             return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._put(conn)
+
+    # ── Users ────────────────────────────────────────────────────
+
+    def user_count(self) -> int:
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM users")
+            return cur.fetchone()[0]
+        finally:
+            self._put(conn)
+
+    def create_user(self, username: str, email: str, password: str,
+                    can_view_dashboard: bool = True,
+                    can_view_pods: bool = False,
+                    can_view_approvals: bool = False,
+                    can_approve: bool = False,
+                    can_admin: bool = False) -> dict | None:
+        pwh = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                INSERT INTO users
+                    (username, email, password_hash,
+                     can_view_dashboard, can_view_pods, can_view_approvals,
+                     can_approve, can_admin)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, username, email,
+                    can_view_dashboard, can_view_pods, can_view_approvals,
+                    can_approve, can_admin, created_at
+            """, (username, email, pwh,
+                  can_view_dashboard, can_view_pods, can_view_approvals,
+                  can_approve, can_admin))
+            conn.commit()
+            row = cur.fetchone()
+            return self._serialize_user(row) if row else None
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            return None
+        finally:
+            self._put(conn)
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        conn = self._conn()
+    @staticmethod
+    def _serialize_user(row: dict) -> dict:
+        d = dict(row)
+        d.pop("password_hash", None)
+        for key in ("created_at", "updated_at", "reset_token_expiry"):
+            if isinstance(d.get(key), datetime):
+                d[key] = d[key].isoformat() if d[key] else None
+        return d
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+            row = cur.fetchone()
+            return self._serialize_user(row) if row else None
+        finally:
+            self._put(conn)
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+            row = cur.fetchone()
+            return self._serialize_user(row) if row else None
+        finally:
+            self._put(conn)
+
+    def verify_password(self, username: str, password: str) -> dict | None:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            user = dict(row)
+            pwh = user.get("password_hash", "")
+            if pwh and bcrypt.checkpw(password.encode(), pwh.encode()):
+                return self._serialize_user(row)
+            return None
+        finally:
+            self._put(conn)
+
+    def update_user_permissions(self, user_id: int, **perms: bool) -> bool:
+        allowed = {"can_view_dashboard", "can_view_pods", "can_view_approvals",
+                   "can_approve", "can_admin"}
+        sets = []
+        params = []
+        for k, v in perms.items():
+            if k in allowed:
+                sets.append(f"{k} = %s")
+                params.append(v)
+        if not sets:
+            return False
+        params.append(user_id)
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"UPDATE users SET {', '.join(sets)}, updated_at = NOW() WHERE id = %s", params)
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            self._put(conn)
+
+    def update_password(self, user_id: int, new_password: str) -> bool:
+        pwh = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s",
+                        (pwh, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            self._put(conn)
+
+    def set_reset_token(self, email: str) -> str | None:
+        user = self.get_user_by_email(email)
+        if not user:
+            return None
+        token = uuid.uuid4().hex + secrets.token_urlsafe(16)
+        expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET reset_token = %s, reset_token_expiry = %s WHERE id = %s",
+                        (token, expiry, user["id"]))
+            conn.commit()
+            return token
+        finally:
+            self._put(conn)
+
+    def verify_reset_token(self, token: str) -> dict | None:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM users WHERE reset_token = %s AND reset_token_expiry > NOW()", (token,))
+            row = cur.fetchone()
+            return self._serialize_user(row) if row else None
+        finally:
+            self._put(conn)
+
+    def clear_reset_token(self, user_id: int) -> None:
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET reset_token = NULL, reset_token_expiry = NULL WHERE id = %s", (user_id,))
+            conn.commit()
+        finally:
+            self._put(conn)
+
+    def delete_user(self, user_id: int) -> bool:
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            self._put(conn)
+
+    def list_users(self) -> list[dict]:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT id, username, email, can_view_dashboard, can_view_pods, can_view_approvals, can_approve, can_admin, created_at FROM users ORDER BY created_at ASC")
+            return [self._serialize_user(r) for r in cur.fetchall()]
         finally:
             self._put(conn)
