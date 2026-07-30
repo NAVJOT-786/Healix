@@ -438,20 +438,23 @@ body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f9; margin:
 .logo {{ text-align: center; margin-bottom: 24px; }}
 .logo svg {{ width: 48px; height: 48px; }}
 .logo h1 {{ font-size: 22px; color: #1a1a2e; margin: 8px 0 0; letter-spacing: -0.5px; }}
-.badge {{ display: inline-block; background: #27ae6020; color: #27ae60; border-radius: 20px; padding: 4px 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }}
+.badge {{ display: inline-block; background: #27ae6015; color: #27ae60; border-radius: 20px; padding: 4px 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }}
 h2 {{ font-size: 18px; color: #1a1a2e; margin: 0 0 4px; }}
 p {{ color: #555; font-size: 14px; line-height: 1.6; margin: 6px 0; }}
-.creds {{ background: #f0f4ff; border: 1px solid #d0d9f0; border-radius: 10px; padding: 20px; margin: 20px 0; }}
-.creds-item {{ display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e0e6f0; }}
-.creds-item:last-child {{ border-bottom: none; }}
-.creds-label {{ color: #666; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }}
-.creds-value {{ color: #1a1a2e; font-size: 15px; font-weight: 700; font-family: 'Courier New', monospace; }}
-.steps {{ background: #fafafa; border-radius: 10px; padding: 20px; margin: 20px 0; }}
-.step {{ display: flex; gap: 12px; margin-bottom: 12px; }}
-.step:last-child {{ margin-bottom: 0; }}
-.step-num {{ width: 24px; height: 24px; background: #27ae60; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }}
-.step-text {{ font-size: 14px; color: #333; line-height: 1.5; }}
-.warning {{ background: #fff8e6; border-left: 4px solid #f39c12; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #7d6608; margin: 20px 0; }}
+.creds {{ display: grid; gap: 10px; margin: 20px 0; }}
+.creds-item {{ background: #f0f4ff; border: 1px solid #d0d9f0; border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; gap: 14px; }}
+.creds-icon {{ width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }}
+.creds-icon.user {{ background: #e8f0fe; }}
+.creds-icon.lock {{ background: #fef3e8; }}
+.creds-body {{ flex: 1; min-width: 0; }}
+.creds-label {{ font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }}
+.creds-value {{ font-size: 15px; color: #1a1a2e; font-weight: 700; font-family: 'Courier New', monospace; word-break: break-all; margin-top: 2px; }}
+.steps {{ margin: 20px 0; }}
+.step {{ display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid #eee; align-items: flex-start; }}
+.step:last-child {{ border-bottom: none; }}
+.step-num {{ width: 28px; height: 28px; background: #27ae60; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; margin-top: 1px; box-shadow: 0 2px 6px rgba(39,174,96,0.3); }}
+.step-text {{ font-size: 14px; color: #333; line-height: 1.5; padding-top: 3px; }}
+.warning {{ background: #fff8e6; border-left: 4px solid #f39c12; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #7d6608; margin: 20px 0; line-height: 1.5; }}
 .footer {{ margin-top: 28px; font-size: 12px; color: #aaa; border-top: 1px solid #eee; padding-top: 14px; text-align: center; }}
 </style></head><body><div class="card">
 <div class="logo">
@@ -466,17 +469,17 @@ p {{ color: #555; font-size: 14px; line-height: 1.6; margin: 6px 0; }}
 <p style="text-align:center">Your autonomous infrastructure healing account is ready.</p>
 
 <div class="creds">
-<div class="creds-item"><span class="creds-label">Username</span><span class="creds-value">{username}</span></div>
-<div class="creds-item"><span class="creds-label">Password</span><span class="creds-value">{password}</span></div>
+<div class="creds-item"><div class="creds-icon user">&#x1F464;</div><div class="creds-body"><div class="creds-label">Username</div><div class="creds-value">{username}</div></div></div>
+<div class="creds-item"><div class="creds-icon lock">&#x1F511;</div><div class="creds-body"><div class="creds-label">Password</div><div class="creds-value">{password}</div></div></div>
 </div>
 
 <div class="steps">
-<div class="step"><span class="step-num">1</span><span class="step-text">Go to the <strong>Healix Dashboard</strong> at your server address</span></div>
-<div class="step"><span class="step-num">2</span><span class="step-text">Login with your <strong>username</strong> and <strong>password</strong> above</span></div>
-<div class="step"><span class="step-num">3</span><span class="step-text">Change your password in the <strong>User Settings</strong> after first login</span></div>
+<div class="step"><span class="step-num">1</span><span class="step-text">Go to the <strong>Healix Dashboard</strong> at your server address and log in</span></div>
+<div class="step"><span class="step-num">2</span><span class="step-text">Use the <strong>username</strong> and <strong>password</strong> shown above to sign in</span></div>
+<div class="step"><span class="step-num">3</span><span class="step-text">Change your password in <strong>User Settings</strong> after your first login</span></div>
 </div>
 
-<div class="warning">⚠️ For security, please change your password after first login. Keep these credentials private.</div>
+<div class="warning">&#x26A0;&#xFE0F; For security, please change your password after first login. Keep these credentials private.</div>
 
 <div class="footer">Healix — Autonomous Infrastructure Healing</div>
 </div></body></html>"""

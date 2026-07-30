@@ -481,6 +481,7 @@ def _refresh_user_sessions(user_id: int) -> None:
     new_perms = {
         "can_view_dashboard": target.get("can_view_dashboard", False),
         "can_view_pods": target.get("can_view_pods", False),
+        "can_view_containers": target.get("can_view_containers", False),
         "can_view_approvals": target.get("can_view_approvals", False),
         "can_approve": target.get("can_approve", False),
         "can_admin": target.get("can_admin", False),
@@ -751,6 +752,8 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2/dist/chartjs-plugin-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
   :root {
     --bg: #0a0e17; --surface: rgba(22,27,34,0.75); --surface2: rgba(30,37,48,0.8);
@@ -1096,27 +1099,54 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 
   /* ── Metrics Tab ────────────────────────────────── */
   .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
-  .metrics-kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
-  .metrics-kpi-card { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); border-radius: 14px; padding: 18px; text-align: center; }
-  .metrics-kpi-card .kpi-val { font-size: 28px; font-weight: 700; color: var(--text); line-height: 1.2; }
-  .metrics-kpi-card .kpi-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 6px; font-weight: 500; }
-  .metrics-kpi-card.green .kpi-val { color: var(--green); }
-  .metrics-kpi-card.red .kpi-val { color: var(--red); }
-  .metrics-kpi-card.blue .kpi-val { color: var(--blue); }
-  .metrics-kpi-card.purple .kpi-val { color: var(--purple); }
-  .metrics-chart-card { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); border-radius: 14px; padding: 20px; opacity: 0; animation: fadeInUp 0.5s ease forwards; }
+  .metrics-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+  .metrics-stat-card { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); border-radius: 14px; padding: 16px 18px; display: flex; align-items: center; gap: 14px; position: relative; overflow: hidden; transition: all 0.25s cubic-bezier(0.4,0,0.2,1); cursor: default; }
+  .metrics-stat-card:hover { border-color: var(--border-glow); box-shadow: 0 8px 32px rgba(0,0,0,0.3); transform: translateY(-2px); }
+  .metrics-stat-card::after { content: ''; position: absolute; inset: 0; border-radius: 14px; opacity: 0; transition: opacity 0.3s; background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, transparent 50%); pointer-events: none; }
+  .metrics-stat-card:hover::after { opacity: 1; }
+  .metrics-stat-card .stat-accent { width: 4px; height: 48px; border-radius: 3px; flex-shrink: 0; }
+  .metrics-stat-card.green .stat-accent { background: var(--green); }
+  .metrics-stat-card.blue .stat-accent { background: var(--blue); }
+  .metrics-stat-card.red .stat-accent { background: var(--red); }
+  .metrics-stat-card.purple .stat-accent { background: var(--purple); }
+  .metrics-stat-card .stat-body { flex: 1; min-width: 0; }
+  .metrics-stat-card .stat-val { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1.1; letter-spacing: -0.5px; }
+  .metrics-stat-card.green .stat-val { color: var(--green); }
+  .metrics-stat-card.blue .stat-val { color: var(--blue); }
+  .metrics-stat-card.red .stat-val { color: var(--red); }
+  .metrics-stat-card.purple .stat-val { color: var(--purple); }
+  .metrics-stat-card .stat-label { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 500; margin-top: 2px; }
+  .metrics-stat-card .stat-trend { font-size: 11px; font-weight: 600; margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 3px; }
+  .metrics-stat-card .stat-trend.up { color: var(--green); }
+  .metrics-stat-card .stat-trend.down { color: var(--red); }
+  .metrics-stat-card .stat-trend.flat { color: var(--text3); }
+  .metrics-stat-card .stat-sparkline { width: 64px; height: 32px; flex-shrink: 0; margin-left: auto; }
+  .metrics-stat-card .stat-sparkline canvas { width: 100% !important; height: 100% !important; display: block; }
+  .metrics-chart-card { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); border-radius: 14px; padding: 20px; opacity: 0; animation: fadeInUp 0.5s ease forwards; transition: all 0.25s cubic-bezier(0.4,0,0.2,1); }
+  .metrics-chart-card:hover { border-color: var(--border-glow); box-shadow: 0 8px 32px rgba(0,0,0,0.2); transform: translateY(-1px); }
   .metrics-chart-card h3 { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
   .metrics-chart-card h3::before { content: ''; width: 3px; height: 14px; background: var(--blue); border-radius: 2px; }
+  .metrics-chart-card h3 .chart-desc { font-weight: 400; font-size: 10px; color: var(--text3); text-transform: none; letter-spacing: 0; margin-left: auto; }
   .metrics-chart-card canvas { width: 100% !important; max-height: 260px; }
+  .metrics-chart-card.gauge-card { display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .metrics-chart-card.full-width { grid-column: 1 / -1; }
   .metrics-empty { color: var(--text2); font-size: 13px; font-style: italic; padding: 40px; text-align: center; grid-column: 1 / -1; }
-  .metrics-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .metrics-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
   .metrics-toolbar-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
   .metrics-range-btns { display: flex; gap: 2px; background: var(--surface2); border-radius: 8px; padding: 3px; }
   .range-btn { background: none; border: none; color: var(--text2); font-size: 12px; font-weight: 500; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s; font-family: var(--font-mono); }
   .range-btn:hover { color: var(--text); background: var(--hover-tint); }
   .range-btn.active { color: var(--blue); background: rgba(88,166,255,0.12); font-weight: 600; }
-  @media (max-width: 900px) { .metrics-grid { grid-template-columns: 1fr; } .metrics-kpi { grid-template-columns: repeat(2, 1fr); } }
+  .metrics-refresh-select { background: var(--surface2); border: 1px solid var(--glass-border); color: var(--text2); font-size: 11px; font-weight: 500; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-family: var(--font-mono); outline: none; transition: border-color 0.2s; margin-left: auto; }
+  .metrics-refresh-select:hover, .metrics-refresh-select:focus { border-color: var(--blue); color: var(--text); }
+  .metrics-last-updated { font-size: 10px; color: var(--text3); font-family: var(--font-mono); }
+  .metrics-gauge-wrap { position: relative; width: 100%; max-width: 220px; aspect-ratio: 1; margin: 0 auto; }
+  .metrics-gauge-ring { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--gauge-color) 0deg, rgba(48,54,61,0.3) 0deg); transition: background 0.6s ease; }
+  .metrics-gauge-ring::before { content: ''; position: absolute; inset: 18%; border-radius: 50%; background: var(--glass-bg); }
+  .gauge-center-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+  .gauge-center-label .gauge-val { font-size: 24px; font-weight: 800; color: var(--gauge-color); line-height: 1; letter-spacing: -0.5px; transition: color 0.6s ease; }
+  .gauge-center-label .gauge-sub { font-size: 9px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 5px; font-weight: 600; }
+  @media (max-width: 900px) { .metrics-grid { grid-template-columns: 1fr; } .metrics-stat-row { grid-template-columns: repeat(2, 1fr); } .metrics-stat-card .stat-sparkline { width: 48px; } }
 
   /* ── Approvals Tab ────────────────────────────────── */
   .approval-card { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); border-radius: 14px; padding: 20px; margin-bottom: 12px; }
@@ -1192,8 +1222,8 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     </button>
     <nav class="hdr-tabs">
       <button class="tab-btn active" data-tab="overview">Overview</button>
-      <button class="tab-btn" data-tab="pods">Pods <span class="tab-badge" id="pod-count" style="display:none">0</span></button>
-      <button class="tab-btn" data-tab="containers">Containers <span class="tab-badge" id="container-count" style="display:none">0</span></button>
+      <button class="tab-btn" data-tab="pods" id="pods-tab">Pods <span class="tab-badge" id="pod-count" style="display:none">0</span></button>
+      <button class="tab-btn" data-tab="containers" id="containers-tab">Containers <span class="tab-badge" id="container-count" style="display:none">0</span></button>
       <button class="tab-btn" data-tab="timeline">Timeline</button>
       <button class="tab-btn" data-tab="llm">LLM</button>
 <button class="tab-btn" data-tab="metrics">Metrics</button>
@@ -1336,11 +1366,31 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="tab-panel" id="panel-metrics">
-      <div class="metrics-kpi">
-        <div class="metrics-kpi-card green"><div class="kpi-val" id="kpi-total-heals">0</div><div class="kpi-label">Total Heals</div></div>
-        <div class="metrics-kpi-card blue"><div class="kpi-val" id="kpi-llm-calls">0</div><div class="kpi-label">LLM Calls</div></div>
-        <div class="metrics-kpi-card red"><div class="kpi-val" id="kpi-errors">0</div><div class="kpi-label">Errors</div></div>
-        <div class="metrics-kpi-card purple"><div class="kpi-val" id="kpi-uptime">0m</div><div class="kpi-label">Uptime</div></div>
+      <div class="metrics-stat-row">
+        <div class="metrics-stat-card green">
+          <div class="stat-accent"></div>
+          <div class="stat-body"><div class="stat-val" id="kpi-total-heals">0</div><div class="stat-label">Total Heals</div></div>
+          <div class="stat-sparkline"><canvas id="spark-heals"></canvas></div>
+          <div class="stat-trend" id="trend-heals"></div>
+        </div>
+        <div class="metrics-stat-card blue">
+          <div class="stat-accent"></div>
+          <div class="stat-body"><div class="stat-val" id="kpi-llm-calls">0</div><div class="stat-label">LLM Calls</div></div>
+          <div class="stat-sparkline"><canvas id="spark-llm"></canvas></div>
+          <div class="stat-trend" id="trend-llm"></div>
+        </div>
+        <div class="metrics-stat-card red">
+          <div class="stat-accent"></div>
+          <div class="stat-body"><div class="stat-val" id="kpi-errors">0</div><div class="stat-label">Errors</div></div>
+          <div class="stat-sparkline"><canvas id="spark-errors"></canvas></div>
+          <div class="stat-trend" id="trend-errors"></div>
+        </div>
+        <div class="metrics-stat-card purple">
+          <div class="stat-accent"></div>
+          <div class="stat-body"><div class="stat-val" id="kpi-uptime">0m</div><div class="stat-label">Uptime</div></div>
+          <div class="stat-sparkline"><canvas id="spark-uptime"></canvas></div>
+          <div class="stat-trend" id="trend-uptime"></div>
+        </div>
       </div>
       <div class="metrics-toolbar">
         <span class="metrics-toolbar-label">Time Range</span>
@@ -1351,10 +1401,17 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
           <button class="range-btn" data-range="1h">1h</button>
           <button class="range-btn" data-range="all">All</button>
         </div>
+        <select class="metrics-refresh-select" id="metrics-refresh-interval">
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+          <option value="60000">1m</option>
+        </select>
+        <span class="metrics-last-updated" id="metrics-last-updated"></span>
       </div>
       <div class="metrics-grid">
         <div class="metrics-chart-card full-width"><h3>Heals Over Time</h3><canvas id="chart-heals-time"></canvas></div>
-        <div class="metrics-chart-card full-width"><h3>LLM Latency Trend</h3><canvas id="chart-llm-latency"></canvas></div>
+        <div class="metrics-chart-card gauge-card"><h3>System Health</h3><div class="metrics-gauge-wrap"><div class="metrics-gauge-ring" id="gauge-ring"></div><div class="gauge-center-label"><div class="gauge-val" id="gauge-val">0%</div><div class="gauge-sub">System Health</div></div></div></div>
         <div class="metrics-chart-card"><h3>Heal Actions</h3><canvas id="chart-heal-actions"></canvas></div>
         <div class="metrics-chart-card"><h3>Route Outcomes</h3><canvas id="chart-route-outcomes"></canvas></div>
         <div class="metrics-chart-card"><h3>Namespace Activity</h3><canvas id="chart-namespace"></canvas></div>
@@ -1396,7 +1453,7 @@ var PROVIDER_COLORS = {groq:'green',cerebras:'purple',gemini:'blue',mistral:'cya
 var ROUTE_COLORS = {auto_healed:'green',dev_issue:'red',needs_escalation:'yellow',rollback:'orange',needs_approval:'orange',rejected:'red'};
 var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users'];
 
-var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true;
+var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true, _canViewPods = true, _canViewContainers = true;
 var _prevStats = {heals:0,calls:0,rollbacks:0,pdb:0,errors:0};
 var _prevDiagCount = 0, _latencyHistory = {}, _allRecs = [], _spRecId = null;
 var _timelineFilter = 'all';
@@ -1449,7 +1506,7 @@ function toggleTheme() {
   if (_selectedTab === 'metrics' && _lastMetricsData) { destroyAllMetricCharts(); buildAllMetricCharts(_lastMetricsData, _lastDiagsData); }
 }
 if (localStorage.getItem('dashboard_theme') === 'light') document.documentElement.classList.add('light');
-if (typeof Chart !== 'undefined') { var _tc = getChartColors(); Chart.defaults.color = _tc.text; Chart.defaults.borderColor = _tc.border; }
+if (typeof Chart !== 'undefined') { var _tc = getChartColors(); Chart.defaults.color = _tc.text; Chart.defaults.borderColor = _tc.border; Chart.defaults.devicePixelRatio = window.devicePixelRatio || 1; if (Chart.register) { try { Chart.register(ChartZoom); } catch(e){} try { Chart.register(ChartAnnotation); } catch(e){} } }
 setInterval(updateClock, 1000);
 updateClock();
 
@@ -1460,7 +1517,7 @@ pollStatus();
 setInterval(pollStatus, 30000);
 
 function switchTab(name) {
-  if (name === 'approvals' && !_canViewApprovals) { name = 'overview'; }
+  if ((name === 'approvals' && !_canViewApprovals) || (name === 'pods' && !_canViewPods) || (name === 'containers' && !_canViewContainers)) { name = 'overview'; }
   var prev = _selectedTab;
   _selectedTab = name;
   document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===name);});
@@ -1472,6 +1529,11 @@ function switchTab(name) {
 document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('click',function(){switchTab(b.dataset.tab);});});
 (function(){var h=location.hash.replace('#','');if(VALID_TABS.includes(h))switchTab(h);})();
 document.querySelectorAll('.range-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.range-btn').forEach(function(x){x.classList.remove('active');});b.classList.add('active');_metricsTimeRange=b.dataset.range;if(_lastMetricsData)buildAllMetricCharts(_lastMetricsData,_lastDiagsData);});});
+document.getElementById('metrics-refresh-interval').addEventListener('change',function(){
+  var ms = parseInt(this.value);
+  clearInterval(_pollInterval);
+  _pollInterval = setInterval(poll, ms);
+});
 
 function animateValue(el,from,to,dur) {
   if(from===to){el.textContent=to;return;}
@@ -1731,20 +1793,30 @@ function renderDiagnoses(recs) {
   _allRecs.forEach(function(r){if(r.platform==='docker')_dockerRecs.push(r);else _k8sRecs.push(r);});
 
   var podsEl=document.getElementById('diag-list-pods'),podBadge=document.getElementById('pod-count');
-  var visibleK8s = _k8sRecs.filter(function(r){return _diagFilter.pods==='active'?!r.deleted:r.deleted;});
-  if(visibleK8s.length>0){podBadge.textContent=visibleK8s.length;podBadge.style.display='';}else{podBadge.style.display='none';}
-  var podItems=[];
-  if(visibleK8s.length===0)podItems.push({id:'empty-k8s-'+_diagFilter.pods,html:'<div class="diag-empty" data-id="empty-k8s-'+_diagFilter.pods+'">No '+( _diagFilter.pods==='active' ? 'failing K8s pods' : 'removed K8s pods' )+' recorded yet</div>'});
-  else visibleK8s.forEach(function(r){podItems.push({id:r.id,html:buildCardHtml(r)});});
-  smartUpdate(podsEl, podItems);
+  if (!_canViewPods) {
+    if (podsEl) podsEl.innerHTML = '<div class="diag-empty">You do not have permission to view this section. Contact an administrator to request access.</div>';
+    if (podBadge) podBadge.style.display = 'none';
+  } else {
+    var visibleK8s = _k8sRecs.filter(function(r){return _diagFilter.pods==='active'?!r.deleted:r.deleted;});
+    if(visibleK8s.length>0){podBadge.textContent=visibleK8s.length;podBadge.style.display='';}else{podBadge.style.display='none';}
+    var podItems=[];
+    if(visibleK8s.length===0)podItems.push({id:'empty-k8s-'+_diagFilter.pods,html:'<div class="diag-empty" data-id="empty-k8s-'+_diagFilter.pods+'">No '+( _diagFilter.pods==='active' ? 'failing K8s pods' : 'removed K8s pods' )+' recorded yet</div>'});
+    else visibleK8s.forEach(function(r){podItems.push({id:r.id,html:buildCardHtml(r)});});
+    smartUpdate(podsEl, podItems);
+  }
 
   var ctrEl=document.getElementById('diag-list-containers'),ctrBadge=document.getElementById('container-count');
-  var visibleDocker = _dockerRecs.filter(function(r){return _diagFilter.containers==='active'?!r.deleted:r.deleted;});
-  if(visibleDocker.length>0){ctrBadge.textContent=visibleDocker.length;ctrBadge.style.display='';}else{ctrBadge.style.display='none';}
-  var ctrItems=[];
-  if(visibleDocker.length===0)ctrItems.push({id:'empty-docker-'+_diagFilter.containers,html:'<div class="diag-empty" data-id="empty-docker-'+_diagFilter.containers+'">No '+( _diagFilter.containers==='active' ? 'failing Docker containers' : 'removed Docker containers' )+' recorded yet</div>'});
-  else visibleDocker.forEach(function(r){ctrItems.push({id:r.id,html:buildCardHtml(r)});});
-  smartUpdate(ctrEl, ctrItems);
+  if (!_canViewContainers) {
+    if (ctrEl) ctrEl.innerHTML = '<div class="diag-empty">You do not have permission to view this section. Contact an administrator to request access.</div>';
+    if (ctrBadge) ctrBadge.style.display = 'none';
+  } else {
+    var visibleDocker = _dockerRecs.filter(function(r){return _diagFilter.containers==='active'?!r.deleted:r.deleted;});
+    if(visibleDocker.length>0){ctrBadge.textContent=visibleDocker.length;ctrBadge.style.display='';}else{ctrBadge.style.display='none';}
+    var ctrItems=[];
+    if(visibleDocker.length===0)ctrItems.push({id:'empty-docker-'+_diagFilter.containers,html:'<div class="diag-empty" data-id="empty-docker-'+_diagFilter.containers+'">No '+( _diagFilter.containers==='active' ? 'failing Docker containers' : 'removed Docker containers' )+' recorded yet</div>'});
+    else visibleDocker.forEach(function(r){ctrItems.push({id:r.id,html:buildCardHtml(r)});});
+    smartUpdate(ctrEl, ctrItems);
+  }
 
   _knownDiagIds = {};
   _allRecs.forEach(function(r){ _knownDiagIds[r.id] = true; });
@@ -1809,6 +1881,8 @@ var _metricsCharts = {};
 var _metricsTimeRange = '5m';
 var _healsTimeHistory = [];
 var _llmLatencyHist = {};
+var _statHistory = [];
+var _pollInterval = null;
 
 function snapshotMetrics(d) {
   var now = new Date();
@@ -1823,6 +1897,8 @@ function snapshotMetrics(d) {
       if (_llmLatencyHist[name].length > 720) _llmLatencyHist[name] = _llmLatencyHist[name].slice(-720);
     }
   });
+  _statHistory.push({ts:ts, date:now, heals:d.total_heals, llm:d.total_llm_calls, errors:d.total_llm_errors, uptime:d.uptime_seconds});
+  if (_statHistory.length > 200) _statHistory = _statHistory.slice(-200);
 }
 
 function filterByTimeRange(arr) {
@@ -1858,6 +1934,66 @@ function buildMetricsKPIs(d) {
   document.getElementById('kpi-llm-calls').textContent = d.total_llm_calls;
   document.getElementById('kpi-errors').textContent = d.total_llm_errors;
   document.getElementById('kpi-uptime').textContent = fmtUptime(d.uptime_seconds);
+  var h = _statHistory;
+  if (h.length < 2) return;
+  var cur = h[h.length-1];
+  var prev = h[0];
+  var trends = {
+    heals: cur.heals - prev.heals,
+    llm: cur.llm - prev.llm,
+    errors: cur.errors - prev.errors,
+    uptime: cur.uptime - prev.uptime
+  };
+  ['heals','llm','errors','uptime'].forEach(function(k) {
+    var el = document.getElementById('trend-' + k);
+    if (trends[k] > 0) { el.className = 'stat-trend up'; el.innerHTML = '\u25B2 +' + trends[k]; }
+    else if (trends[k] < 0) { el.className = 'stat-trend down'; el.innerHTML = '\u25BC ' + trends[k]; }
+    else { el.className = 'stat-trend flat'; el.innerHTML = '\u2014'; }
+  });
+}
+
+function buildStatSparklines() {
+  var h = _statHistory;
+  if (h.length < 2) return;
+  var c = getChartColors();
+  var sparkConfigs = {
+    sparkHeals: {key:'heals',color:c.green}, sparkLlm: {key:'llm',color:c.blue},
+    sparkErrors: {key:'errors',color:c.red}, sparkUptime: {key:'uptime',color:c.purple}
+  };
+  Object.keys(sparkConfigs).forEach(function(id) {
+    destroyMetricChart(id);
+    var cfg = sparkConfigs[id];
+    var data = h.map(function(p){return p[cfg.key];});
+    var min = Math.min.apply(null, data);
+    var max = Math.max.apply(null, data);
+    var range = max - min || 1;
+    var normalized = data.map(function(v){return (v-min)/range;});
+    var ctx = document.getElementById(id);
+    if (!ctx) return;
+    var grad = ctx.getContext('2d').createLinearGradient(0,0,0,32);
+    grad.addColorStop(0, cfg.color+'66');
+    grad.addColorStop(1, cfg.color+'05');
+    _metricsCharts[id] = new Chart(ctx, {
+      type:'line',
+      data:{labels:data.map(function(){return '';}), datasets:[{data:normalized,borderColor:cfg.color,backgroundColor:grad,fill:true,tension:0.4,pointRadius:0,borderWidth:1.5}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false,beginAtZero:true}},animation:false}
+    });
+  });
+}
+
+function updateHealthGauge(d) {
+  var el = document.getElementById('gauge-ring');
+  var valEl = document.getElementById('gauge-val');
+  if (!el || !valEl) return;
+  var totalCalls = d.total_llm_calls || 1;
+  var errors = d.total_llm_errors || 0;
+  var pct = Math.max(0, Math.min(100, Math.round((1 - errors/totalCalls) * 100)));
+  var color = pct >= 90 ? 'var(--green)' : pct >= 70 ? 'var(--yellow)' : 'var(--red)';
+  var degrees = (pct / 100) * 360;
+  el.style.setProperty('--gauge-color', color);
+  el.style.background = 'conic-gradient(' + color + ' 0deg ' + degrees + 'deg, rgba(48,54,61,0.3) ' + degrees + 'deg 360deg)';
+  valEl.textContent = pct + '%';
+  valEl.style.color = color;
 }
 
 function buildChartHealsOverTime() {
@@ -1873,33 +2009,36 @@ function buildChartHealsOverTime() {
     return dtSec>0 ? parseFloat((delta/dtSec*60).toFixed(2)) : 0;
   });
   var ctx = document.getElementById('chart-heals-time');
+  var grad = ctx.getContext('2d').createLinearGradient(0,0,0,260);
+  grad.addColorStop(0, c.green+'55');
+  grad.addColorStop(0.5, c.green+'22');
+  grad.addColorStop(1, c.green+'05');
   _metricsCharts.healsTime = new Chart(ctx, {
     type:'line',
-    data:{labels:labels, datasets:[{label:'Heals/min',data:data,borderColor:c.green,backgroundColor:c.green+'18',fill:true,tension:0.4,pointRadius:0,pointHoverRadius:4,borderWidth:2}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return ctx.parsed.y.toFixed(1)+' heals/min';}}}},scales:{x:{ticks:{color:c.text,maxTicksLimit:12,font:{size:10},maxRotation:0},grid:{color:c.grid}},y:{beginAtZero:true,ticks:{color:c.text,font:{size:10}},grid:{color:c.grid}}}}
-  });
-}
-
-function buildChartLLMLatency() {
-  var names = Object.keys(_llmLatencyHist);
-  if (names.length === 0) return;
-  destroyMetricChart('llmLatency');
-  var c = getChartColors();
-  var palette = [c.green, c.blue, c.purple, c.cyan, c.orange, c.yellow];
-  var filtered = names.map(function(name){return filterByTimeRange(_llmLatencyHist[name]);});
-  var maxLen = Math.max.apply(null, filtered.map(function(f){return f.length;}));
-  if (maxLen === 0) return;
-  var labels = [];
-  for (var i = 0; i < maxLen; i++) labels.push('');
-  var datasets = names.map(function(name, i) {
-    var f = filterByTimeRange(_llmLatencyHist[name]);
-    return {label:name, data:f.map(function(h){return h.val;}), borderColor:palette[i%palette.length], backgroundColor:'transparent', tension:0.3, pointRadius:0, pointHoverRadius:3, borderWidth:2};
-  });
-  var ctx = document.getElementById('chart-llm-latency');
-  _metricsCharts.llmLatency = new Chart(ctx, {
-    type:'line',
-    data:{labels:labels, datasets:datasets},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:c.text,font:{size:11},usePointStyle:true,pointStyle:'circle'}}},scales:{x:{ticks:{display:false},grid:{color:c.grid}},y:{beginAtZero:true,ticks:{color:c.text,callback:function(v){return v+'s'},font:{size:10}},grid:{color:c.grid}}}}
+    data:{labels:labels, datasets:[{label:'Heals/min',data:data,borderColor:c.green,backgroundColor:grad,fill:true,tension:0.35,pointRadius:0,pointHoverRadius:5,pointHoverBackgroundColor:c.green,pointHoverBorderColor:'#fff',pointHoverBorderWidth:2,borderWidth:2}]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(13,17,23,0.94)', titleColor:c.text, bodyColor:c.text, titleFont:{weight:'600'},
+          padding:12, cornerRadius:8, displayColors:true, boxPadding:4,
+          callbacks:{
+            title:function(its){return its[0].label;},
+            label:function(ct){
+              var v=ct.parsed.y.toFixed(1);
+              var totalHeals = _healsTimeHistory.length>0 ? _healsTimeHistory[_healsTimeHistory.length-1].val : 0;
+              return 'Heal Rate: '+v+' heals/min';
+            }
+          }
+        },
+        zoom:{pan:{enabled:true,mode:'x',threshold:5},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',drag:{enabled:true,backgroundColor:'rgba(88,166,255,0.08)',borderColor:c.blue,borderWidth:1}}}
+      },
+      scales:{
+        x:{ticks:{color:c.text,maxTicksLimit:12,font:{size:10},maxRotation:0},grid:{color:c.grid}},
+        y:{beginAtZero:true,ticks:{color:c.text,font:{size:10}},grid:{color:c.grid}}
+      }
+    }
   });
 }
 
@@ -1911,11 +2050,29 @@ function buildChartHealActions(recs) {
   destroyMetricChart('healActions');
   var c = getChartColors();
   var palette = [c.green, c.blue, c.purple, c.cyan, c.orange, c.yellow, c.red];
+  var total = keys.reduce(function(s,k){return s+actions[k];}, 0);
   var ctx = document.getElementById('chart-heal-actions');
   _metricsCharts.healActions = new Chart(ctx, {
     type:'bar',
     data:{labels:keys.map(function(k){return k.replace(/_/g,' ');}), datasets:[{data:keys.map(function(k){return actions[k];}), backgroundColor:palette.slice(0,keys.length), borderRadius:6, barThickness:28}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:c.text,stepSize:1,font:{size:10}},grid:{color:c.grid}},y:{ticks:{color:c.text,font:{size:11}},grid:{display:false}}}}
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(13,17,23,0.94)', titleColor:c.text, bodyColor:c.text,
+          padding:12, cornerRadius:8, displayColors:true, boxPadding:4,
+          callbacks:{
+            title:function(its){return its[0].label;},
+            label:function(ct){
+              var pct = total > 0 ? (ct.parsed.x/total*100).toFixed(1) : 0;
+              return 'Count: '+ct.parsed.x+'  ('+pct+'%)';
+            }
+          }
+        }
+      },
+      scales:{x:{beginAtZero:true,ticks:{color:c.text,stepSize:1,font:{size:10}},grid:{color:c.grid}},y:{ticks:{color:c.text,font:{size:11}},grid:{display:false}}}
+    }
   });
 }
 
@@ -1926,15 +2083,31 @@ function buildChartRouteOutcomes(d) {
   destroyMetricChart('routeOutcomes');
   var c = getChartColors();
   var colorMap = {auto_healed:c.green, dev_issue:c.red, needs_escalation:c.yellow, rollback:c.orange, needs_approval:c.orange, rejected:c.red};
+  var total = keys.reduce(function(s,k){return s+routes[k];}, 0);
   var ctx = document.getElementById('chart-route-outcomes');
   _metricsCharts.routeOutcomes = new Chart(ctx, {
     type:'doughnut',
     data:{labels:keys.map(function(k){return k.replace(/_/g,' ');}), datasets:[{data:keys.map(function(k){return routes[k];}), backgroundColor:keys.map(function(k){return colorMap[k]||c.blue}), borderWidth:0}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:c.text,font:{size:11},padding:12,usePointStyle:true,pointStyle:'circle'}}}}
-  });
-}
+      options:{
+        responsive:true, maintainAspectRatio:true, cutout:'65%',
+        plugins:{
+          legend:{position:'bottom',labels:{color:c.text,font:{size:11,weight:'600'},padding:14,usePointStyle:true,pointStyle:'circle'}},
+          tooltip:{
+            backgroundColor:'rgba(13,17,23,0.94)', titleColor:c.text, bodyColor:c.text,
+            padding:12, cornerRadius:8, displayColors:true, boxPadding:4,
+            callbacks:{
+              label:function(ct){
+                var pct = total > 0 ? (ct.parsed/total*100).toFixed(1) : 0;
+                return ct.label+': '+ct.parsed+'  ('+pct+'%)';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
 
-function buildChartNamespace(recs) {
+  function buildChartNamespace(recs) {
   var ns = {};
   recs.forEach(function(r){if(r.namespace)ns[r.namespace]=(ns[r.namespace]||0)+1;});
   var keys = Object.keys(ns).sort(function(a,b){return ns[b]-ns[a];}).slice(0,8);
@@ -1947,7 +2120,21 @@ function buildChartNamespace(recs) {
   _metricsCharts.namespace = new Chart(ctx, {
     type:'bar',
     data:{labels:keys, datasets:[{data:keys.map(function(k){return ns[k];}), backgroundColor:colors, borderRadius:6, barThickness:24}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:c.text,font:{size:10}},grid:{display:false}},y:{beginAtZero:true,ticks:{color:c.text,stepSize:1,font:{size:10}},grid:{color:c.grid}}}}
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(13,17,23,0.94)', titleColor:c.text, bodyColor:c.text,
+          padding:12, cornerRadius:8, displayColors:false,
+          callbacks:{
+            title:function(its){return its[0].label;},
+            label:function(ct){return 'Incidents: '+ct.parsed.y;}
+          }
+        }
+      },
+      scales:{x:{ticks:{color:c.text,font:{size:10}},grid:{display:false}},y:{beginAtZero:true,ticks:{color:c.text,stepSize:1,font:{size:10}},grid:{color:c.grid}}}
+    }
   });
 }
 
@@ -1959,19 +2146,38 @@ function buildChartStatus(recs) {
   destroyMetricChart('status');
   var c = getChartColors();
   var palette = [c.red, c.orange, c.yellow, c.blue, c.purple, c.cyan, c.green];
+  var total = keys.reduce(function(s,k){return s+st[k];}, 0);
   var ctx = document.getElementById('chart-status');
   _metricsCharts.status = new Chart(ctx, {
     type:'doughnut',
     data:{labels:keys, datasets:[{data:keys.map(function(k){return st[k];}), backgroundColor:palette.slice(0,keys.length), borderWidth:0}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:c.text,font:{size:11},padding:12,usePointStyle:true,pointStyle:'circle'}}}}
+      options:{
+        responsive:true, maintainAspectRatio:true, cutout:'65%',
+      plugins:{
+        legend:{position:'bottom',labels:{color:c.text,font:{size:11,weight:'600'},padding:14,usePointStyle:true,pointStyle:'circle'}},
+        tooltip:{
+          backgroundColor:'rgba(13,17,23,0.94)', titleColor:c.text, bodyColor:c.text,
+          padding:12, cornerRadius:8, displayColors:true, boxPadding:4,
+          callbacks:{
+            label:function(ct){
+              var pct = total > 0 ? (ct.parsed/total*100).toFixed(1) : 0;
+              return ct.label+': '+ct.parsed+'  ('+pct+'%)';
+            }
+          }
+        }
+      }
+    }
   });
 }
 
 function buildAllMetricCharts(d, recs) {
   if (_selectedTab !== 'metrics') return;
+  var now = new Date();
+  document.getElementById('metrics-last-updated').textContent = 'Updated ' + now.toLocaleTimeString();
   buildMetricsKPIs(d);
+  buildStatSparklines();
+  updateHealthGauge(d);
   buildChartHealsOverTime();
-  buildChartLLMLatency();
   buildChartHealActions(recs);
   buildChartRouteOutcomes(d);
   buildChartNamespace(recs);
@@ -2153,7 +2359,7 @@ function renderUsers(users) {
       var inp = document.getElementById(id);
       if (inp) saved[id] = inp.value;
     });
-    var permsKeys = ['can_view_dashboard','can_view_pods','can_view_approvals','can_approve','can_admin'];
+    var permsKeys = ['can_view_dashboard','can_view_pods','can_view_containers','can_view_approvals','can_approve','can_admin'];
     permsKeys.forEach(function(k){
       var cb = document.getElementById('nu-'+k);
       if (cb) saved['nu-'+k] = cb.checked;
@@ -2171,6 +2377,7 @@ function renderUsers(users) {
   var perms = [
     {key:'can_view_dashboard',label:'View Dashboard'},
     {key:'can_view_pods',label:'View Pods'},
+    {key:'can_view_containers',label:'View Containers'},
     {key:'can_view_approvals',label:'View Approvals'},
     {key:'can_approve',label:'Can Approve'},
     {key:'can_admin',label:'Admin'},
@@ -2194,6 +2401,7 @@ function renderUsers(users) {
     var allPerms = [
       {key:'can_view_dashboard', label:'Dashboard', color:'var(--green,#3fb950)'},
       {key:'can_view_pods', label:'Pods', color:'var(--blue,#58a6ff)'},
+      {key:'can_view_containers', label:'Containers', color:'var(--cyan,#39d2c0)'},
       {key:'can_view_approvals', label:'Approvals', color:'var(--text2,#8b949e)'},
       {key:'can_approve', label:'Approve', color:'var(--orange,#d29922)'},
       {key:'can_admin', label:'Admin', color:'var(--purple,#8957e5)'},
@@ -2244,6 +2452,7 @@ function submitNewUser() {
   var perms = {};
   perms.can_view_dashboard = document.getElementById('nu-can_view_dashboard').checked;
   perms.can_view_pods = document.getElementById('nu-can_view_pods').checked;
+  perms.can_view_containers = document.getElementById('nu-can_view_containers').checked;
   perms.can_view_approvals = document.getElementById('nu-can_view_approvals').checked;
   perms.can_approve = document.getElementById('nu-can_approve').checked;
   perms.can_admin = document.getElementById('nu-can_admin').checked;
@@ -2305,6 +2514,22 @@ function checkUserPermissions(cb) {
       if (!_canViewApprovals && _selectedTab === 'approvals') {
         switchTab('overview');
       }
+      var pt = document.getElementById('pods-tab');
+      if (pt) {
+        _canViewPods = p.can_view_pods || false;
+        pt.style.display = _canViewPods ? '' : 'none';
+      }
+      if (!_canViewPods && _selectedTab === 'pods') {
+        switchTab('overview');
+      }
+      var ct = document.getElementById('containers-tab');
+      if (ct) {
+        _canViewContainers = p.can_view_containers || false;
+        ct.style.display = _canViewContainers ? '' : 'none';
+      }
+      if (!_canViewContainers && _selectedTab === 'containers') {
+        switchTab('overview');
+      }
     }
     if (cb) cb();
   }).catch(function(){if (cb) cb();});
@@ -2319,7 +2544,7 @@ function poll() {
   fetch('/diagnoses').then(function(r){return r.json();}).then(function(d){_lastDiagsData=d.records||[]; renderDiagnoses(_lastDiagsData); if(_lastMetricsData) buildAllMetricCharts(_lastMetricsData,_lastDiagsData);}).catch(function(){});
 }
 poll();
-setInterval(poll,5000);
+_pollInterval = setInterval(poll,5000);
 setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
 </script>
 </body>
@@ -2576,6 +2801,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 perms = {
                     "can_view_dashboard": user.get("can_view_dashboard", True),
                     "can_view_pods": user.get("can_view_pods", False),
+                    "can_view_containers": user.get("can_view_containers", False),
                     "can_view_approvals": user.get("can_view_approvals", False),
                     "can_approve": user.get("can_approve", False),
                     "can_admin": user.get("can_admin", False),
@@ -2658,6 +2884,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 username=username, email=email, password=rand_password,
                 can_view_dashboard=perms.get("can_view_dashboard", True),
                 can_view_pods=perms.get("can_view_pods", False),
+                can_view_containers=perms.get("can_view_containers", False),
                 can_view_approvals=perms.get("can_view_approvals", False),
                 can_approve=perms.get("can_approve", False),
                 can_admin=perms.get("can_admin", False),

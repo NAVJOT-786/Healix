@@ -91,6 +91,7 @@ class StorageBackend:
                     password_hash   TEXT NOT NULL,
                     can_view_dashboard BOOLEAN DEFAULT TRUE,
                     can_view_pods   BOOLEAN DEFAULT FALSE,
+                    can_view_containers BOOLEAN DEFAULT FALSE,
                     can_view_approvals BOOLEAN DEFAULT FALSE,
                     can_approve     BOOLEAN DEFAULT FALSE,
                     can_admin       BOOLEAN DEFAULT FALSE,
@@ -101,6 +102,7 @@ class StorageBackend:
                 );
                 ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE;
                 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_containers BOOLEAN DEFAULT FALSE;
                 CREATE INDEX IF NOT EXISTS idx_diagnoses_route ON diagnoses(route);
                 CREATE INDEX IF NOT EXISTS idx_diagnoses_deleted ON diagnoses(deleted);
                 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
@@ -113,13 +115,18 @@ class StorageBackend:
                 pwh = bcrypt.hashpw(b"sharry786", bcrypt.gensalt()).decode()
                 cur.execute("""
                     INSERT INTO users (username, email, password_hash,
-                        can_view_dashboard, can_view_pods, can_view_approvals,
+                        can_view_dashboard, can_view_pods, can_view_containers, can_view_approvals,
                         can_approve, can_admin)
-                    VALUES (%s, %s, %s, TRUE, TRUE, TRUE, TRUE, TRUE)
+                    VALUES (%s, %s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
                     ON CONFLICT (username) DO NOTHING
                 """, ("admin", "admin@healix.local", pwh))
                 conn.commit()
                 log.info("Default admin user seeded (admin / sharry786)")
+
+            cur.execute("UPDATE users SET can_view_containers = TRUE WHERE username = 'admin' AND can_view_containers IS DISTINCT FROM TRUE")
+            if cur.rowcount:
+                conn.commit()
+                log.info("Set can_view_containers=TRUE for existing admin user")
 
             log.info("Database migrated — tables ready")
         except Exception as e:
@@ -414,6 +421,7 @@ class StorageBackend:
     def create_user(self, username: str, email: str, password: str,
                     can_view_dashboard: bool = True,
                     can_view_pods: bool = False,
+                    can_view_containers: bool = False,
                     can_view_approvals: bool = False,
                     can_approve: bool = False,
                     can_admin: bool = False) -> dict | None:
@@ -424,14 +432,14 @@ class StorageBackend:
             cur.execute("""
                 INSERT INTO users
                     (username, email, password_hash,
-                     can_view_dashboard, can_view_pods, can_view_approvals,
+                     can_view_dashboard, can_view_pods, can_view_containers, can_view_approvals,
                      can_approve, can_admin)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, username, email,
-                    can_view_dashboard, can_view_pods, can_view_approvals,
+                    can_view_dashboard, can_view_pods, can_view_containers, can_view_approvals,
                     can_approve, can_admin, created_at
             """, (username, email, pwh,
-                  can_view_dashboard, can_view_pods, can_view_approvals,
+                  can_view_dashboard, can_view_pods, can_view_containers, can_view_approvals,
                   can_approve, can_admin))
             conn.commit()
             row = cur.fetchone()
@@ -490,7 +498,7 @@ class StorageBackend:
             self._put(conn)
 
     def update_user_permissions(self, user_id: int, **perms: bool) -> bool:
-        allowed = {"can_view_dashboard", "can_view_pods", "can_view_approvals",
+        allowed = {"can_view_dashboard", "can_view_pods", "can_view_containers", "can_view_approvals",
                    "can_approve", "can_admin"}
         sets = []
         params = []
@@ -571,7 +579,7 @@ class StorageBackend:
         conn = self._conn()
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute("SELECT id, username, email, can_view_dashboard, can_view_pods, can_view_approvals, can_approve, can_admin, created_at FROM users ORDER BY created_at ASC")
+            cur.execute("SELECT id, username, email, can_view_dashboard, can_view_pods, can_view_containers, can_view_approvals, can_approve, can_admin, created_at FROM users ORDER BY created_at ASC")
             return [self._serialize_user(r) for r in cur.fetchall()]
         finally:
             self._put(conn)
