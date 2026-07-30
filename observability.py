@@ -551,12 +551,14 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
 <body>
 <div class="login-card">
   <div class="login-brand">
+    <a href="/" style="text-decoration:none;color:inherit">
     <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
       <circle cx="24" cy="24" r="22" stroke="rgba(88,166,255,0.3)" stroke-width="2"/>
       <path d="M16 24l6 6 10-12" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <h1>Healix</h1>
     <p>Dashboard Login</p>
+    </a>
   </div>
   <form id="loginForm" onsubmit="return doLogin(event)">
     <div class="login-field">
@@ -1195,6 +1197,26 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     .hdr { padding: 0 16px; gap: 12px; }
     .main { padding-left: 12px; padding-right: 12px; }
   }
+
+  /* ── Change Password Modal ──────────────────────── */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; }
+  .modal-overlay.active { display: flex; }
+  .modal-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px 32px; max-width: 400px; width: 90%; box-shadow: 0 16px 48px rgba(0,0,0,0.4); }
+  .modal-card h2 { margin: 0 0 4px; font-size: 18px; color: var(--text); }
+  .modal-card p { color: var(--text2); font-size: 13px; margin: 0 0 18px; }
+  .modal-field { margin-bottom: 14px; }
+  .modal-field label { display: block; font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .modal-field input { width: 100%; padding: 10px 12px; font-size: 14px; color: var(--text); background: rgba(13,17,23,0.8); border: 1px solid var(--border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box; }
+  .modal-field input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(88,166,255,0.1); }
+  .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+  .modal-btn { flex: 1; padding: 10px 0; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+  .modal-btn.primary { background: var(--blue); color: #fff; }
+  .modal-btn.primary:hover { box-shadow: 0 4px 12px rgba(88,166,255,0.3); }
+  .modal-btn.secondary { background: rgba(48,54,61,0.6); color: var(--text2); }
+  .modal-btn.secondary:hover { background: rgba(48,54,61,0.9); color: var(--text); }
+  .modal-msg { margin-top: 12px; padding: 10px 14px; font-size: 13px; border-radius: 8px; text-align: center; display: none; }
+  .modal-msg.success { display: block; background: rgba(63,185,80,0.1); color: var(--green); border: 1px solid rgba(63,185,80,0.2); }
+  .modal-msg.error { display: block; background: rgba(248,81,73,0.08); color: var(--red); border: 1px solid rgba(248,81,73,0.2); }
 </style>
 </head>
 <body>
@@ -1203,7 +1225,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <div id="card-tooltip" class="card-tooltip"></div>
 
 <header class="hdr">
-  <div class="hdr-brand">
+  <div class="hdr-brand" onclick="switchTab('overview')" style="cursor:pointer">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
     <h1>Healix</h1>
   </div>
@@ -1229,6 +1251,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <button class="tab-btn" data-tab="metrics">Metrics</button>
 <button class="tab-btn" data-tab="approvals" id="approvals-tab">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
 <button class="tab-btn" data-tab="users" id="users-tab" style="display:none">Users</button>
+      <button class="tab-btn" onclick="openChangePwModal()" style="color:var(--text2)">Change Password</button>
       <button class="tab-btn" onclick="logout()" style="color:var(--red);margin-left:8px">Logout</button>
     </nav>
   </div>
@@ -2535,6 +2558,59 @@ function checkUserPermissions(cb) {
   }).catch(function(){if (cb) cb();});
 }
 
+// ── Change Password Modal ──────────────────────────────────────
+function openChangePwModal() {
+  document.getElementById('pw-modal').classList.add('active');
+  var m = document.getElementById('pw-msg');
+  m.style.display = 'none';
+  m.className = 'modal-msg';
+  document.getElementById('pw-old').value = '';
+  document.getElementById('pw-new').value = '';
+  document.getElementById('pw-confirm').value = '';
+  document.getElementById('pw-old').focus();
+}
+function closeChangePwModal() {
+  document.getElementById('pw-modal').classList.remove('active');
+}
+function submitChangePw() {
+  var old = document.getElementById('pw-old').value;
+  var pw = document.getElementById('pw-new').value;
+  var cf = document.getElementById('pw-confirm').value;
+  var msg = document.getElementById('pw-msg');
+  msg.style.display = 'none';
+  msg.className = 'modal-msg';
+  if (!old || !pw || !cf) { msg.className = 'modal-msg error'; msg.textContent = 'All fields are required'; msg.style.display = 'block'; return; }
+  if (pw !== cf) { msg.className = 'modal-msg error'; msg.textContent = 'New passwords do not match'; msg.style.display = 'block'; return; }
+  if (pw.length < 6) { msg.className = 'modal-msg error'; msg.textContent = 'Password must be at least 6 characters'; msg.style.display = 'block'; return; }
+  fetch('/change-password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({old_password: old, new_password: pw})
+  }).then(function(r){ return r.json().then(function(j){ return {status: r.status, body: j}; }); })
+    .then(function(res){
+      if (res.status === 200) {
+        msg.className = 'modal-msg success';
+        msg.textContent = 'Password changed successfully';
+        msg.style.display = 'block';
+        document.getElementById('pw-old').value = '';
+        document.getElementById('pw-new').value = '';
+        document.getElementById('pw-confirm').value = '';
+        setTimeout(closeChangePwModal, 2000);
+      } else {
+        msg.className = 'modal-msg error';
+        msg.textContent = res.body.error || 'Failed to change password';
+        msg.style.display = 'block';
+      }
+    }).catch(function(){
+      msg.className = 'modal-msg error';
+      msg.textContent = 'Connection failed';
+      msg.style.display = 'block';
+    });
+}
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-overlay')) closeChangePwModal();
+});
+
 function poll() {
   checkUserPermissions(function() {
     fetchApprovals();
@@ -2547,6 +2623,31 @@ poll();
 _pollInterval = setInterval(poll,5000);
 setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
 </script>
+
+<div class="modal-overlay" id="pw-modal">
+  <div class="modal-card">
+    <h2>Change Password</h2>
+    <p>Enter your current password and a new password.</p>
+    <div class="modal-field">
+      <label for="pw-old">Current Password</label>
+      <input type="password" id="pw-old" autocomplete="current-password">
+    </div>
+    <div class="modal-field">
+      <label for="pw-new">New Password</label>
+      <input type="password" id="pw-new" autocomplete="new-password">
+    </div>
+    <div class="modal-field">
+      <label for="pw-confirm">Confirm New Password</label>
+      <input type="password" id="pw-confirm" autocomplete="new-password">
+    </div>
+    <div class="modal-msg" id="pw-msg"></div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeChangePwModal()">Cancel</button>
+      <button class="modal-btn primary" onclick="submitChangePw()">Change Password</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>"""
 
@@ -2831,6 +2932,31 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        elif self.path == "/change-password":
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session:
+                self._respond(401, {"error": "Not authenticated"})
+                return
+            data = self._read_body()
+            old_pw = data.get("old_password", "").strip()
+            new_pw = data.get("new_password", "").strip()
+            if not old_pw or not new_pw:
+                self._respond(400, {"error": "All fields are required"})
+                return
+            if len(new_pw) < 6:
+                self._respond(400, {"error": "Password must be at least 6 characters"})
+                return
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+            user = _storage.verify_password(session["username"], old_pw)
+            if not user:
+                self._respond(401, {"error": "Old password is incorrect"})
+                return
+            _storage.update_password(user["id"], new_pw)
+            self._respond(200, {"ok": True})
 
         elif self.path == "/forgot":
             data = self._read_body()

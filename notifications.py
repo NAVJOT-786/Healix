@@ -442,17 +442,17 @@ body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f9; margin:
 h2 {{ font-size: 18px; color: #1a1a2e; margin: 0 0 4px; }}
 p {{ color: #555; font-size: 14px; line-height: 1.6; margin: 6px 0; }}
 .creds {{ display: grid; gap: 10px; margin: 20px 0; }}
-.creds-item {{ background: #f0f4ff; border: 1px solid #d0d9f0; border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; gap: 14px; }}
-.creds-icon {{ width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }}
+.creds-item {{ background: #f0f4ff; border: 1px solid #d0d9f0; border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; }}
+.creds-icon {{ width: 38px; height: 38px; line-height: 38px; text-align: center; border-radius: 8px; font-size: 18px; display: inline-block; vertical-align: middle; flex-shrink: 0; margin-right: 14px; }}
 .creds-icon.user {{ background: #e8f0fe; }}
 .creds-icon.lock {{ background: #fef3e8; }}
 .creds-body {{ flex: 1; min-width: 0; }}
 .creds-label {{ font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }}
 .creds-value {{ font-size: 15px; color: #1a1a2e; font-weight: 700; font-family: 'Courier New', monospace; word-break: break-all; margin-top: 2px; }}
 .steps {{ margin: 20px 0; }}
-.step {{ display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid #eee; align-items: flex-start; }}
+.step {{ display: flex; padding: 14px 0; border-bottom: 1px solid #eee; align-items: flex-start; }}
 .step:last-child {{ border-bottom: none; }}
-.step-num {{ width: 28px; height: 28px; background: #27ae60; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0; margin-top: 1px; box-shadow: 0 2px 6px rgba(39,174,96,0.3); }}
+.step-num {{ width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; background: #27ae60; color: #fff; font-size: 13px; font-weight: 700; display: inline-block; flex-shrink: 0; margin-right: 14px; box-shadow: 0 2px 6px rgba(39,174,96,0.3); }}
 .step-text {{ font-size: 14px; color: #333; line-height: 1.5; padding-top: 3px; }}
 .warning {{ background: #fff8e6; border-left: 4px solid #f39c12; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #7d6608; margin: 20px 0; line-height: 1.5; }}
 .footer {{ margin-top: 28px; font-size: 12px; color: #aaa; border-top: 1px solid #eee; padding-top: 14px; text-align: center; }}
