@@ -20,6 +20,7 @@ import secrets
 import smtplib
 import threading
 import urllib.parse
+import calendar
 from dataclasses import dataclass, asdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
@@ -932,8 +933,6 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .hdr-user { display: flex; align-items: center; gap: 8px; }
   .hdr-avatar { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--glass-border); object-fit: cover; }
   .hdr-email { font-size: 12px; color: var(--text2); white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
-  .hdr-report-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent; color: var(--text2); cursor: pointer; transition: all 0.2s; }
-  .hdr-report-btn:hover { background: var(--hover-tint); color: var(--blue); }
   .clr-picker { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 8px; border: 1px solid var(--glass-border); background: var(--surface2); }
   .clr-dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; transition: all 0.2s; }
   .clr-dot:hover { transform: scale(1.25); }
@@ -1340,6 +1339,14 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .modal-msg { margin-top: 12px; padding: 10px 14px; font-size: 13px; border-radius: 8px; text-align: center; display: none; }
   .modal-msg.success { display: block; background: rgba(63,185,80,0.1); color: var(--green); border: 1px solid rgba(63,185,80,0.2); }
   .modal-msg.error { display: block; background: rgba(248,81,73,0.08); color: var(--red); border: 1px solid rgba(248,81,73,0.2); }
+
+  /* ── Reports Tab ───────────────────────────────── */
+  .report-block { max-width: 560px; }
+  .report-desc { color: var(--text2); font-size: 13px; line-height: 1.5; margin-bottom: 20px; }
+  .report-range-row { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .report-range-label { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+  .report-actions { display: flex; }
+  .report-actions .modal-btn { flex: 0 0 auto; padding: 11px 22px; }
 </style>
 </head>
 <body>
@@ -1375,9 +1382,6 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       <span class="hdr-email" id="hdr-email"></span>
     </div>
     <span class="hdr-clock-toggle" id="hdr-clock-toggle" onclick="toggleTimezone()"><span id="hdr-clock"></span><span class="tz-label" id="hdr-tz">LOCAL</span></span>
-    <button class="hdr-report-btn" onclick="downloadWeeklyReport()" title="Download Weekly Report">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    </button>
     <div class="clr-picker" id="clr-picker">
       <button class="clr-dot active" data-clr="blue" style="background:#58a6ff" onclick="setColorTheme('blue')" title="Blue"></button>
       <button class="clr-dot" data-clr="purple" style="background:#bc8cff" onclick="setColorTheme('purple')" title="Purple"></button>
@@ -1399,6 +1403,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <button class="tab-btn" data-tab="metrics">Metrics</button>
 <button class="tab-btn" data-tab="approvals" id="approvals-tab">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
 <button class="tab-btn" data-tab="users" id="users-tab" style="display:none">Users</button>
+      <button class="tab-btn" data-tab="reports">Reports</button>
       <button class="tab-btn" onclick="openChangePwModal()" style="color:var(--text2)">Change Password</button>
       <button class="tab-btn" onclick="logout()" style="color:var(--red);margin-left:8px">Logout</button>
     </nav>
@@ -1610,6 +1615,30 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="tab-panel" id="panel-reports">
+      <div class="panel full-panel">
+        <div class="panel-title">Download Reports</div>
+        <div class="report-block">
+          <div class="report-desc">Generate a PDF summary of incidents, heals, failures, platforms, actions and affected resources for a selected period.</div>
+          <div class="report-range-row">
+            <span class="report-range-label">Period</span>
+            <div class="metrics-range-btns">
+              <button class="range-btn active" data-range="1" onclick="setReportRange(this,1)">1d</button>
+              <button class="range-btn" data-range="3" onclick="setReportRange(this,3)">3d</button>
+              <button class="range-btn" data-range="7" onclick="setReportRange(this,7)">7d</button>
+              <button class="range-btn" data-range="14" onclick="setReportRange(this,14)">14d</button>
+            </div>
+          </div>
+          <div class="report-actions">
+            <button class="modal-btn primary" id="report-download-btn" onclick="downloadReport(7)">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download Report
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </main>
 
@@ -1622,7 +1651,7 @@ var CONFIG = __CONFIG__;
 var COLORS = ['green','blue','purple','yellow','orange','cyan','red'];
 var PROVIDER_COLORS = {groq:'green',cerebras:'purple',gemini:'blue',mistral:'cyan',openrouter:'orange',ollama:'yellow'};
 var ROUTE_COLORS = {auto_healed:'green',dev_issue:'red',needs_escalation:'yellow',rollback:'orange',needs_approval:'orange',rejected:'red'};
-var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users'];
+var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users','reports'];
 
 var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true, _canViewPods = true, _canViewContainers = true;
 var _prevStats = {heals:0,calls:0,rollbacks:0,pdb:0,errors:0};
@@ -1827,7 +1856,7 @@ function switchTab(name) {
 }
 document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('click',function(){switchTab(b.dataset.tab);});});
 (function(){var h=location.hash.replace('#','');if(VALID_TABS.includes(h))switchTab(h);})();
-document.querySelectorAll('.range-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.range-btn').forEach(function(x){x.classList.remove('active');});b.classList.add('active');_metricsTimeRange=b.dataset.range;if(_lastMetricsData)buildAllMetricCharts(_lastMetricsData,_lastDiagsData);});});
+document.querySelectorAll('#panel-metrics .range-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#panel-metrics .range-btn').forEach(function(x){x.classList.remove('active');});b.classList.add('active');_metricsTimeRange=b.dataset.range;if(_lastMetricsData)buildAllMetricCharts(_lastMetricsData,_lastDiagsData);});});
 document.getElementById('metrics-refresh-interval').addEventListener('change',function(){
   var ms = parseInt(this.value);
   clearInterval(_pollInterval);
@@ -2894,13 +2923,19 @@ document.addEventListener('click', function(e) {
   if (e.target.classList.contains('modal-overlay')) closeChangePwModal();
 });
 
-function downloadWeeklyReport() {
+function downloadReport(days) {
   var a = document.createElement('a');
-  a.href = '/api/report/weekly';
-  a.download = 'healix-weekly-report.pdf';
+  a.href = '/api/report?days=' + days;
+  a.download = 'healix-report-' + days + 'd.pdf';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+function setReportRange(btn, days) {
+  document.querySelectorAll('#panel-reports .range-btn').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  document.getElementById('report-download-btn').onclick = function(){downloadReport(days);};
 }
 
 function poll() {
@@ -2989,110 +3024,393 @@ def mark_unhealthy() -> None:
     _health_state.is_healthy = False
 
 
-def _generate_weekly_pdf() -> bytes:
+def _clean_report_text(s: str) -> str:
+    return (s or "").encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _lerp(c1, c2, t):
+    return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
+
+
+def _hgrad(pdf, x, y, w, h, c1, c2, radius=0):
+    from fpdf.enums import Corner
+    if w <= 0 or h <= 0:
+        return
+    steps = max(2, int(w * 2))
+    sw = w / steps
+    for i in range(steps):
+        c = _lerp(c1, c2, i / (steps - 1))
+        rc = False
+        if radius and i == 0:
+            rc = (Corner.TOP_LEFT, Corner.BOTTOM_LEFT)
+        if radius and i == steps - 1:
+            rc = (Corner.TOP_RIGHT, Corner.BOTTOM_RIGHT)
+        pdf.set_fill_color(*c)
+        pdf.rect(x + i * sw, y, sw + 0.05, h, "F", round_corners=rc, corner_radius=radius)
+
+
+def _vgrad(pdf, x, y, w, h, c1, c2, radius=0):
+    from fpdf.enums import Corner
+    if w <= 0 or h <= 0:
+        return
+    steps = max(2, int(h * 2))
+    sh = h / steps
+    for i in range(steps):
+        c = _lerp(c1, c2, i / (steps - 1))
+        rc = False
+        if radius and i == 0:
+            rc = (Corner.TOP_LEFT, Corner.TOP_RIGHT)
+        if radius and i == steps - 1:
+            rc = (Corner.BOTTOM_LEFT, Corner.BOTTOM_RIGHT)
+        pdf.set_fill_color(*c)
+        pdf.rect(x, y + i * sh, w, sh + 0.05, "F", round_corners=rc, corner_radius=radius)
+
+
+def generate_report(days: int = 7) -> bytes:
+    from io import BytesIO
+    from fpdf import FPDF
+
+    INK = (31, 36, 48)
+    MUTED = (107, 114, 128)
+    BORDER = (226, 232, 240)
+    TRACK = (241, 245, 249)
+    WHITE = (255, 255, 255)
+    HDR_A = (30, 58, 138)
+    HDR_B = (37, 99, 235)
+    HDR_C = (6, 182, 212)
+    BLUE = (37, 99, 235)
+    VIOLET = (139, 92, 246)
+    GREEN = (16, 185, 129)
+    RED = (239, 68, 68)
+    ORANGE = (249, 115, 22)
+
     now = time.time()
-    week_ago = now - 7 * 86400
+
+    class _ReportPDF(FPDF):
+        def footer(self) -> None:
+            self.set_y(-16)
+            _hgrad(self, 0, self.get_y() - 1, 210, 1.2, HDR_A, HDR_C)
+            self.set_y(-14)
+            self.set_font("Helvetica", "", 8)
+            self.set_text_color(MUTED[0], MUTED[1], MUTED[2])
+            self.cell(0, 10,
+                      f"Healix | Generated {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))} | Page {self.page_no()}",
+                      align="C")
+
+    start_ts = now - max(1, int(days)) * 86400
     all_recs = diagnosis_store.to_list()
-    week_recs = [r for r in all_recs if _ts_to_epoch(r.get("timestamp", "")) >= week_ago]
-    total = len(week_recs)
-    success = sum(1 for r in week_recs if r.get("success"))
+    recs = [r for r in all_recs if _ts_to_epoch(r.get("timestamp", "")) >= start_ts]
+    total = len(recs)
+    success = sum(1 for r in recs if r.get("success"))
     failed = total - success
+    success_rate = round(success / total * 100, 1) if total else 0.0
+
     platforms: dict[str, int] = {}
-    routes: dict[str, int] = {}
-    top_pods: dict[str, int] = {}
-    for r in week_recs:
+    actions: dict[str, int] = {}
+    by_day: dict[str, int] = {}
+    resources: dict[str, int] = {}
+    for r in recs:
         p = r.get("platform", "unknown")
         platforms[p] = platforms.get(p, 0) + 1
-        rt = r.get("route", "unknown")
-        routes[rt] = routes.get(rt, 0) + 1
-        pod = r.get("name", "unknown")
-        top_pods[pod] = top_pods.get(pod, 0) + 1
-    top_pods = dict(sorted(top_pods.items(), key=lambda x: -x[1])[:10])
+        ac = r.get("action", "unknown")
+        actions[ac] = actions.get(ac, 0) + 1
+        day = (r.get("timestamp") or "-----")[5:10]
+        by_day[day] = by_day.get(day, 0) + 1
+        nm = r.get("name", "unknown")
+        resources[nm] = resources.get(nm, 0) + 1
+    resources = dict(sorted(resources.items(), key=lambda x: -x[1])[:8])
+    mc = metrics.to_dict()
 
-    lines = []
-    lines.append("Healix - Weekly Heal Summary")
-    lines.append("=" * 50)
-    lines.append("Generated: " + time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(now)))
-    lines.append("Period: " + time.strftime("%Y-%m-%d", time.gmtime(week_ago)) + " - " + time.strftime("%Y-%m-%d", time.gmtime(now)))
-    lines.append("")
-    lines.append("Summary")
-    lines.append("-" * 20)
-    lines.append(f"  Total Incidents:  {total}")
-    lines.append(f"  Successful Heals: {success}")
-    lines.append(f"  Failed:           {failed}")
-    lines.append(f"  Success Rate:     {success / total * 100:.0f}%" if total else "N/A")
-    lines.append("")
-    if platforms:
-        lines.append("By Platform")
-        lines.append("-" * 15)
-        for p, c in sorted(platforms.items(), key=lambda x: -x[1]):
-            lines.append(f"  {p}: {c}")
-        lines.append("")
-    if routes:
-        lines.append("Actions by Route")
-        lines.append("-" * 20)
-        for r, c in sorted(routes.items(), key=lambda x: -x[1]):
-            lines.append(f"  {r}: {c}")
-        lines.append("")
-    if top_pods:
-        lines.append("Most Affected Resources")
-        lines.append("-" * 25)
-        for n, c in top_pods.items():
-            lines.append(f"  {n}: {c} incidents")
-        lines.append("")
-    lines.append("Recent Activity (last 20)")
-    lines.append("-" * 40)
-    header = f"{'#':>3}  {'Date':<12}  {'Resource':<20}  {'Platform':<10}  {'Status':<6}  Action"
-    lines.append(header)
-    lines.append("-" * 80)
-    for idx, r in enumerate(week_recs[:20]):
-        ts = (r.get("timestamp") or "")[-14:-9] if r.get("timestamp") else "--"
-        nm = (r.get("name") or "")[:18]
-        pl = (r.get("platform") or "")[:8]
-        st = "OK" if r.get("success") else "FAIL"
-        ac = (r.get("action") or "")[:28]
-        lines.append(f"{idx+1:>3}  {ts:<12}  {nm:<20}  {pl:<10}  {st:<6}  {ac}")
-    lines.append("")
-    lines.append("=" * 50)
-    lines.append("Healix - AI-Powered Self-Healing Platform")
+    pdf = _ReportPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_margins(12, 12, 12)
+    pdf.add_page()
 
-    text = "\n".join(lines)
-    return _make_pdf(text)
+    def _space(y, need):
+        if y + need > 266:
+            pdf.add_page()
+            return 20
+        return y
 
+    def _section_title(y, title, c1, c2):
+        _hgrad(pdf, 12, y, 5, 7, c1, c2, radius=1.5)
+        pdf.set_xy(21, y + 0.4)
+        pdf.set_font("Helvetica", "B", 12.5)
+        pdf.set_text_color(INK[0], INK[1], INK[2])
+        pdf.cell(150, 7, title)
+        pdf.set_draw_color(*BORDER)
+        pdf.set_line_width(0.5)
+        pdf.line(12, y + 9.5, 198, y + 9.5)
+        return y + 13
 
-def _make_pdf(text: str) -> bytes:
-    import zlib
-    content = zlib.compress(text.encode("utf-8"))
-    objects = [
-        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
-        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj",
-        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R"
-        b"/Resources<</Font<</F1 5 0 R>>>>>>endobj",
-        b"4 0 obj<</Length " + str(len(content)).encode() + b"/Filter/FlateDecode>>stream\n"
-        + content + b"\nendstream\nendobj",
-        b"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Courier>>endobj",
+    # ── Gradient header ────────────────────────────────────────
+    _hgrad(pdf, 0, 0, 210, 30, HDR_A, HDR_C)
+    pdf.set_fill_color(*WHITE)
+    pdf.rect(12, 6, 16, 16, "F", round_corners=True, corner_radius=3)
+    pdf.set_draw_color(*HDR_B)
+    pdf.set_line_width(1.3)
+    pts = [(15.5, 14.5), (17, 14.5), (18.5, 8.5), (20, 19.5), (21.5, 14.5), (24, 14.5)]
+    for i in range(len(pts) - 1):
+        pdf.line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+    pdf.set_xy(33, 6.5)
+    pdf.set_font("Helvetica", "B", 19)
+    pdf.set_text_color(*WHITE)
+    pdf.cell(80, 9, "Healix Report")
+    pdf.set_xy(33, 16.5)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(219, 234, 254)
+    pdf.cell(90, 5, "AI-Powered Self-Healing Platform")
+    pdf.set_xy(118, 7.5)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(199, 227, 255)
+    pdf.cell(80, 4.5, "REPORT PERIOD", align="R")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*WHITE)
+    pdf.set_xy(118, 13.5)
+    pdf.cell(80, 5,
+             f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(start_ts))}  ->  {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))}",
+             align="R")
+    pdf.set_fill_color(*HDR_C)
+    pdf.rect(0, 30, 210, 1.2, "F")
+
+    y = 40
+
+    # ── Summary ────────────────────────────────────────────────
+    y = _space(y, 80)
+    y = _section_title(y, "Summary", BLUE, VIOLET)
+
+    if total:
+        if success_rate >= 90:
+            tint, dot, msg = (220, 252, 231), GREEN, (
+                f"Great health - {success_rate:.0f}% success rate "
+                f"({success} of {total} incidents auto-healed successfully).")
+        elif success_rate >= 60:
+            tint, dot, msg = (254, 243, 199), ORANGE, (
+                f"Moderate health - {success_rate:.0f}% success rate "
+                f"({success} of {total} incidents healed, {failed} failed).")
+        else:
+            tint, dot, msg = (254, 226, 226), RED, (
+                f"Attention needed - only {success_rate:.0f}% success rate "
+                f"({failed} of {total} incidents failed to heal).")
+    else:
+        tint, dot, msg = (224, 242, 254), BLUE, (
+            "No incidents in this period - the platform is running smoothly.")
+    pdf.set_fill_color(*tint)
+    pdf.rect(12, y, 186, 9, "F", round_corners=True, corner_radius=4.5)
+    pdf.set_fill_color(*dot)
+    pdf.rect(19, y + 3, 3, 3, "F", round_corners=True, corner_radius=1.5)
+    pdf.set_xy(26, y + 2.4)
+    pdf.set_font("Helvetica", "B", 8.5)
+    pdf.set_text_color(INK[0], INK[1], INK[2])
+    pdf.cell(170, 4.5, msg)
+    y += 12
+
+    kpis = [
+        ("Total Incidents", str(total), (148, 163, 184), (100, 116, 139)),
+        ("Successful Heals", str(success), GREEN, (5, 150, 105)),
+        ("Failed", str(failed), RED, (185, 28, 28)),
+        ("Success Rate", f"{success_rate:.0f}%", BLUE, VIOLET),
     ]
-    body = b"\n".join(objects)
-    header = b"%PDF-1.4\n"
-    pre_xref = header + body + b"\n"
-    offsets = [0]
-    pos = len(header)
-    for obj in objects:
-        offsets.append(pos)
-        pos += len(obj) + 1
-    xref = b"xref\n0 6\n"
-    xref += f"{offsets[0]:010d} 65535 f \n".encode()
-    for i in range(1, 6):
-        xref += f"{offsets[i]:010d} 00000 n \n".encode()
-    xref += b"trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n"
-    xref += str(len(pre_xref)).encode() + b"\n%%EOF"
-    return pre_xref + xref
+    gap = 3.0
+    cw = (186 - gap * 3) / 4
+    for i, (label, value, c1, c2) in enumerate(kpis):
+        cx = 12 + i * (cw + gap)
+        pdf.set_draw_color(*BORDER)
+        pdf.set_line_width(0.4)
+        pdf.set_fill_color(*WHITE)
+        pdf.rect(cx, y, cw, 24, "DF", round_corners=True, corner_radius=2.5)
+        _hgrad(pdf, cx + 1, y + 1, cw - 2, 3, c1, c2, radius=1.5)
+        pdf.set_xy(cx + 6, y + 8)
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.set_text_color(*c1)
+        pdf.cell(cw - 12, 8, value)
+        pdf.set_xy(cx + 6, y + 18)
+        pdf.set_font("Helvetica", "", 7.5)
+        pdf.set_text_color(*MUTED)
+        pdf.cell(cw - 12, 4, label)
+    y += 28
+
+    chips = [
+        ("LLM Calls", str(mc.get("total_llm_calls", 0)), BLUE),
+        ("LLM Errors", str(mc.get("total_llm_errors", 0)), RED),
+        ("Rollbacks", str(mc.get("rollbacks", 0)), ORANGE),
+        ("PDB Blocks", str(mc.get("pdb_blocks", 0)), VIOLET),
+        ("Uptime", f"{mc.get('uptime_seconds', 0) // 3600}h", (20, 184, 166)),
+    ]
+    chw = (186 - 4 * 2) / 5
+    for i, (lab, val, col) in enumerate(chips):
+        cx = 12 + i * (chw + 2)
+        pdf.set_fill_color(*TRACK)
+        pdf.rect(cx, y, chw, 7, "F", round_corners=True, corner_radius=3.5)
+        pdf.set_fill_color(*col)
+        pdf.rect(cx + 3, y + 2.25, 2.5, 2.5, "F", round_corners=True, corner_radius=1.2)
+        pdf.set_xy(cx + 7, y + 1.4)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.set_text_color(*INK)
+        pdf.cell(chw - 10, 4.2, f"{lab}: {val}")
+    y += 11
+
+    # ── Incidents per day ──────────────────────────────────────
+    y = _space(y, 45)
+    y = _section_title(y, "Incidents Per Day", VIOLET, BLUE)
+    track_h = 16
+    pdf.set_fill_color(*TRACK)
+    pdf.rect(12, y + 6, 186, track_h, "F", round_corners=True, corner_radius=3)
+    if by_day:
+        max_day = max(by_day.values())
+        days_sorted = sorted(by_day.items())
+        slot = 186.0 / len(days_sorted)
+        for i, (day, cnt) in enumerate(days_sorted):
+            bw = max(3.0, slot - 5)
+            bx = 12 + i * slot + (slot - bw) / 2
+            bh = max(1.5, (cnt / max_day) * (track_h - 6))
+            _vgrad(pdf, bx, y + 6 + (track_h - bh) + 2, bw, bh, BLUE, VIOLET)
+            pdf.set_xy(bx - 3, y + 1.5)
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.set_text_color(79, 70, 229)
+            pdf.cell(bw + 6, 4, str(cnt), align="C")
+            pdf.set_xy(bx - 3, y + 6 + track_h + 3)
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(*MUTED)
+            pdf.cell(bw + 6, 4, day, align="C")
+        y += 6 + track_h + 10
+    else:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(12, y + 6)
+        pdf.cell(186, 6, "No incidents recorded in this period.")
+        y += 6 + track_h + 10
+
+    # ── Breakdowns: platform | action ─────────────────────────
+    y = _space(y, 40)
+    y = _section_title(y, "Activity Breakdown", GREEN, VIOLET)
+
+    def _bar_row(bx, ry, label, value, maxv, track_w, c1, c2):
+        pdf.set_xy(bx, ry)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*INK)
+        pdf.cell(38, 5, _clean_report_text(label)[:22])
+        pdf.set_fill_color(*TRACK)
+        pdf.rect(bx + 38, ry + 0.6, track_w, 4.2, "F", round_corners=True, corner_radius=2.1)
+        if maxv:
+            _hgrad(pdf, bx + 38, ry + 0.6, max(1.5, track_w * value / maxv), 4.2, c1, c2)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*c1)
+        pdf.cell(10, 5, str(value), align="R")
+
+    max_plat = max(platforms.values()) if platforms else 0
+    max_act = max(actions.values()) if actions else 0
+    plat_items = sorted(platforms.items(), key=lambda x: -x[1])
+    act_items = sorted(actions.items(), key=lambda x: -x[1])
+    rows = max(len(plat_items), len(act_items), 1)
+    pdf.set_xy(12, y)
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_text_color(*INK)
+    pdf.cell(90, 5, "By Platform")
+    pdf.set_xy(108, y)
+    pdf.cell(90, 5, "By Action")
+    y += 7
+    for i in range(rows):
+        ry = y + i * 7
+        if i < len(plat_items):
+            _bar_row(12, ry, plat_items[i][0], plat_items[i][1], max_plat, 40, GREEN, (20, 184, 166))
+        if i < len(act_items):
+            _bar_row(108, ry, act_items[i][0], act_items[i][1], max_act, 40, VIOLET, BLUE)
+    y += rows * 7 + 6
+
+    # ── Most affected resources ────────────────────────────────
+    if resources:
+        y = _space(y, 30 + len(resources) * 5.6)
+        y = _section_title(y, "Most Affected Resources", ORANGE, RED)
+        max_res = max(resources.values())
+        for nm, cnt in resources.items():
+            pdf.set_xy(12, y)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(*INK)
+            pdf.cell(92, 5, _clean_report_text(nm)[:46])
+            pdf.set_fill_color(*TRACK)
+            pdf.rect(106, y + 0.6, 60, 4.2, "F", round_corners=True, corner_radius=2.1)
+            _hgrad(pdf, 106, y + 0.6, max(1.5, 60 * cnt / max_res), 4.2, ORANGE, RED)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(*RED)
+            pdf.cell(12, 5, str(cnt), align="R")
+            y += 5.6
+        y += 6
+
+    # ── Incident table ─────────────────────────────────────────
+    y = _space(y, 40)
+    y = _section_title(y, "Recent Incidents", BLUE, VIOLET)
+    col_w = [9, 24, 40, 24, 18, 71]
+    heads = ["#", "Date", "Resource", "Platform", "Status", "Action"]
+
+    def _table_head(yy):
+        pdf.set_fill_color(224, 242, 254)
+        pdf.rect(12, yy, 186, 7, "F", round_corners=True, corner_radius=2)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(30, 58, 138)
+        x = 12
+        for w, h in zip(col_w, heads):
+            pdf.set_xy(x, yy + 1.6)
+            pdf.cell(w, 4, h, align="C" if w < 30 else "L")
+            x += w
+        return yy + 8
+
+    if recs:
+        y = _table_head(y)
+        last_page = pdf.page_no()
+        for idx, r in enumerate(recs[:40]):
+            row_y = pdf.get_y()
+            if pdf.page_no() != last_page:
+                last_page = pdf.page_no()
+                row_y = _table_head(row_y)
+            ts = (r.get("timestamp") or "")[5:16]
+            nm = _clean_report_text(r.get("name", ""))[:20]
+            pl = _clean_report_text(r.get("platform", ""))[:10]
+            st = "OK" if r.get("success") else "FAIL"
+            ac = _clean_report_text(r.get("action", ""))[:30]
+            row_fill = WHITE if idx % 2 == 0 else (248, 250, 252)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(*INK)
+            pdf.set_fill_color(*row_fill)
+            x = 12
+            for ci, (w, v) in enumerate(zip(col_w, [str(idx + 1), ts, nm, pl, st, ac])):
+                if ci == 4:
+                    pdf.rect(x, row_y, w, 6.2, "F")
+                    if st == "OK":
+                        pill, tcol = (220, 252, 231), (22, 101, 52)
+                    else:
+                        pill, tcol = (254, 226, 226), (153, 27, 27)
+                    pw = 11
+                    px = x + (w - pw) / 2
+                    pdf.set_fill_color(*pill)
+                    pdf.rect(px, row_y + 1.1, pw, 4.2, "F", round_corners=True, corner_radius=2.1)
+                    pdf.set_font("Helvetica", "B", 7.5)
+                    pdf.set_text_color(*tcol)
+                    pdf.set_xy(px, row_y + 1.5)
+                    pdf.cell(pw, 3.4, st, align="C")
+                    x += w
+                    continue
+                pdf.set_xy(x, row_y + 1.1)
+                pdf.cell(w, 4.4, v, align="C" if w < 30 else "L", fill=True)
+                x += w
+            pdf.set_y(row_y + 6.2)
+    else:
+        pdf.set_fill_color(*TRACK)
+        pdf.rect(12, y, 186, 18, "F", round_corners=True, corner_radius=3)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(12, y + 6)
+        pdf.cell(186, 6, "No incidents recorded in this period.", align="C")
+
+    buf = BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
 
 
 def _ts_to_epoch(ts: str) -> float:
     try:
         t = ts.replace(" UTC", "").strip()
-        return time.mktime(time.strptime(t, "%Y-%m-%d %H:%M:%S"))
+        return calendar.timegm(time.strptime(t, "%Y-%m-%d %H:%M:%S"))
     except (ValueError, OSError):
         return 0
 
@@ -3336,16 +3654,20 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
-        elif self.path == "/api/report/weekly" and METRICS_ENABLED:
+        elif self.path.startswith("/api/report") and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")
             if not _validate_session(cookie):
                 self._respond(401, {"error": "unauthorized"})
                 return
             try:
-                pdf_bytes = _generate_weekly_pdf()
+                qs = urllib.parse.urlparse(self.path).query
+                qp = urllib.parse.parse_qs(qs)
+                days = int((qp.get("days") or ["7"])[0] or 7)
+                days = min(max(days, 1), 30)
+                pdf_bytes = generate_report(days)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
-                self.send_header("Content-Disposition", f'attachment; filename="healix-weekly-{time.strftime("%Y%m%d")}.pdf"')
+                self.send_header("Content-Disposition", f'attachment; filename="healix-report-{days}d-{time.strftime("%Y%m%d")}.pdf"')
                 self.send_header("Content-Length", str(len(pdf_bytes)))
                 self.end_headers()
                 self.wfile.write(pdf_bytes)
