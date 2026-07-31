@@ -12,6 +12,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 import json
@@ -1437,9 +1438,85 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .report-range-label { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
   .report-actions { display: flex; }
   .report-actions .modal-btn { flex: 0 0 auto; padding: 11px 22px; }
+
+  /* ── Boot Splash (crack -> join logo) ───────────── */
+  #boot-splash { position: fixed; inset: 0; z-index: 9998; background: #0a0e17; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; opacity: 1; transition: opacity 0.6s ease; will-change: opacity; }
+  #boot-splash.fade { opacity: 0; pointer-events: none; }
+  .boot-shard-wrap { position: relative; width: 108px; height: 108px; }
+  .boot-shard { position: absolute; inset: 0; }
+  .boot-shard svg { width: 108px; height: 108px; color: var(--blue, #58a6ff); filter: drop-shadow(0 0 12px rgba(88,166,255,0.35)); }
+  .boot-shard.s1 { clip-path: polygon(0 0, 50% 0, 50% 50%, 0 50%); --dx: -52px; --dy: -52px; --dr: -22deg; animation: bootJoin 0.9s cubic-bezier(0.22, 1.2, 0.36, 1) 0.0s forwards; }
+  .boot-shard.s2 { clip-path: polygon(50% 0, 100% 0, 100% 50%, 50% 50%); --dx: 52px; --dy: -52px; --dr: 22deg; animation: bootJoin 0.9s cubic-bezier(0.22, 1.2, 0.36, 1) 0.08s forwards; }
+  .boot-shard.s3 { clip-path: polygon(0 50%, 50% 50%, 50% 100%, 0 100%); --dx: -52px; --dy: 52px; --dr: 22deg; animation: bootJoin 0.9s cubic-bezier(0.22, 1.2, 0.36, 1) 0.16s forwards; }
+  .boot-shard.s4 { clip-path: polygon(50% 50%, 100% 50%, 100% 100%, 50% 100%); --dx: 52px; --dy: 52px; --dr: -22deg; animation: bootJoin 0.9s cubic-bezier(0.22, 1.2, 0.36, 1) 0.24s forwards; }
+  @keyframes bootJoin {
+    0% { transform: translate(var(--dx), var(--dy)) rotate(var(--dr)); opacity: 0; }
+    55% { opacity: 1; }
+    78% { transform: translate(calc(var(--dx) * -0.22), calc(var(--dy) * -0.22)) rotate(calc(var(--dr) * -0.35)); }
+    100% { transform: translate(0, 0) rotate(0); opacity: 1; }
+  }
+  @keyframes bootShake {
+    0%, 100% { transform: translate(0, 0); }
+    12% { transform: translate(-3px, 2px) rotate(-0.6deg); }
+    28% { transform: translate(3px, -2px) rotate(0.6deg); }
+    44% { transform: translate(-2px, -2px) rotate(-0.4deg); }
+    60% { transform: translate(2px, 2px) rotate(0.4deg); }
+  }
+  .boot-shake { animation: bootShake 0.55s ease-out 0.05s both; }
+  .boot-crack { position: absolute; inset: 0; pointer-events: none; opacity: 1; animation: bootCrackFade 0.75s ease-out 0.1s forwards; }
+  .boot-crack svg { width: 108px; height: 108px; color: rgba(139, 148, 158, 0.9); }
+  @keyframes bootCrackFade { 0% { opacity: 1; } 70% { opacity: 0.35; } 100% { opacity: 0; } }
+  .boot-glow { position: absolute; left: 50%; top: 50%; width: 140px; height: 140px; transform: translate(-50%, -50%); border-radius: 50%; background: radial-gradient(circle, rgba(88,166,255,0.35) 0%, rgba(88,166,255,0) 65%); opacity: 0; animation: bootGlowPulse 0.5s ease-out 0.78s forwards; }
+  @keyframes bootGlowPulse { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 60% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.25); } }
+  .boot-status { font-size: 15px; font-weight: 600; color: #8b949e; letter-spacing: 1.5px; text-transform: uppercase; min-height: 20px; }
+  .boot-status .dot { color: var(--blue, #58a6ff); }
+  .boot-welcome { font-size: 22px; font-weight: 800; color: #e6edf3; letter-spacing: -0.5px; opacity: 0; transform: translateY(8px); transition: opacity 0.45s ease, transform 0.45s ease; }
+  .boot-welcome span { color: var(--blue, #58a6ff); }
+  .boot-welcome.show { opacity: 1; transform: translateY(0); }
 </style>
 </head>
 <body>
+
+<div id="boot-splash">
+  <div class="boot-shard-wrap boot-shake">
+    <div class="boot-glow"></div>
+    <div class="boot-shard s1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+    </div>
+    <div class="boot-shard s2">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+    </div>
+    <div class="boot-shard s3">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+    </div>
+    <div class="boot-shard s4">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+    </div>
+    <div class="boot-crack">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="0.9"><path d="M12 2 L12 5 M12 8 L12 11 M12 14 L12 17 M12 20 L12 22 M2 12 L5 12 M8 12 L11 12 M14 12 L17 12 M20 12 L22 12 M5 5 L7.5 7.5 M16.5 16.5 L19 19 M19 5 L16.5 7.5 M7.5 16.5 L5 19 M6 8 L9.5 11.5 M15 15 L18 18 M18 8 L14.5 11.5 M9.5 12.5 L6 16"/></svg>
+    </div>
+  </div>
+  <div class="boot-status">Initialising Healix<span class="dot" id="boot-dots"></span></div>
+  <div class="boot-welcome" id="boot-welcome">Welcome<span id="boot-who"></span></div>
+</div>
+<script>
+(function() {
+  var s = document.getElementById('boot-splash');
+  if (!s) return;
+  var dots = document.getElementById('boot-dots'), n = 0;
+  var dint = setInterval(function() { n = (n + 1) % 4; dots.textContent = '.'.repeat(n); }, 350);
+  fetch('/users/me').then(function(r){return r.json();}).then(function(d){
+    var who = document.getElementById('boot-who');
+    if (who && d && d.username) who.textContent = ', ' + esc(d.username);
+  }).catch(function(){});
+  setTimeout(function() {
+    var w = document.getElementById('boot-welcome');
+    if (w) w.classList.add('show');
+  }, 1150);
+  setTimeout(function() { s.classList.add('fade'); clearInterval(dint); }, 2250);
+  setTimeout(function() { if (s.parentNode) s.parentNode.removeChild(s); }, 2900);
+})();
+</script>
 
 <div class="bg-canvas">
   <div class="bg-gradient"></div>
@@ -2892,8 +2969,8 @@ function renderUsers(users) {
     }
     var created = u.created_at ? u.created_at.split('T')[0] : '';
     html += '<tr style="border-bottom:1px solid var(--glass-border)">';
-    html += '<td style="padding:10px 12px;font-weight:600">'+u.username+'</td>';
-    html += '<td style="padding:10px 12px;color:var(--text2)">'+u.email+'</td>';
+    html += '<td style="padding:10px 12px;font-weight:600">'+esc(u.username)+'</td>';
+    html += '<td style="padding:10px 12px;color:var(--text2)">'+esc(u.email)+'</td>';
     html += '<td style="padding:10px 12px">'+permsHtml+'</td>';
     html += '<td style="padding:10px 12px;color:var(--text2);font-size:12px">'+created+'</td>';
     html += '<td style="padding:10px 12px;text-align:right"><button onclick="deleteUser('+u.id+')" style="padding:4px 12px;background:var(--red,#f85149);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">Delete</button></td>';
@@ -3030,14 +3107,14 @@ function checkUserPermissions(cb) {
       var icon = document.querySelector('#hdr-user-menu .hdr-user-icon');
       if (icon) icon.classList.toggle('has-photo', !!g.picture);
       var head = document.getElementById('hdr-user-dropdown-head');
-      head.innerHTML = '<div class="hd-name">' + (g.name || g.email || 'User') + '</div><div class="hd-mail">' + (g.email || '') + '</div>';
+      head.innerHTML = '<div class="hd-name">' + esc(g.name || g.email || 'User') + '</div><div class="hd-mail">' + esc(g.email || '') + '</div>';
     } else if (d && d.username) {
       var icon = document.querySelector('#hdr-user-menu .hdr-user-icon');
       if (icon) icon.classList.toggle('has-photo', !!d.profile_pic);
       var av = document.getElementById('hdr-avatar');
       if (d.profile_pic) av.src = d.profile_pic; else av.removeAttribute('src');
       var head = document.getElementById('hdr-user-dropdown-head');
-      head.innerHTML = '<div class="hd-name">' + d.username + '</div><div class="hd-mail">' + (d.email || '') + '</div>';
+      head.innerHTML = '<div class="hd-name">' + esc(d.username) + '</div><div class="hd-mail">' + esc(d.email || '') + '</div>';
     }
     document.getElementById('hdr-user-menu').style.display = 'block';
     if (cb) cb();
@@ -3327,6 +3404,10 @@ def mark_unhealthy() -> None:
 
 def _clean_report_text(s: str) -> str:
     return (s or "").encode("latin-1", errors="replace").decode("latin-1")
+
+
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9._@\-]{3,32}$")
+_IMAGE_DATAURL_RE = re.compile(r"^data:image/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$")
 
 
 def _lerp(c1, c2, t):
@@ -4146,8 +4227,14 @@ class _HealthHandler(BaseHTTPRequestHandler):
             if username is not None and (len(username) < 3 or len(username) > 32):
                 self._respond(400, {"error": "Username must be 3-32 characters"})
                 return
+            if username is not None and not _USERNAME_RE.match(username):
+                self._respond(400, {"error": "Username may only contain letters, numbers, and . _ @ -"})
+                return
             if profile_pic is not None and len(profile_pic) > 500000:
                 self._respond(400, {"error": "Profile image too large"})
+                return
+            if profile_pic and not _IMAGE_DATAURL_RE.match(profile_pic):
+                self._respond(400, {"error": "Profile image must be a PNG, JPEG, GIF or WebP data URL"})
                 return
             user = _storage.get_user_by_username(session["username"])
             if not user:
