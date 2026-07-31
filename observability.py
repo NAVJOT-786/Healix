@@ -35,6 +35,7 @@ from config import (
     DIAGNOSIS_PROVIDER_CHAIN, WATCH_EVENTS_ENABLED,
     DASHBOARD_USER, DASHBOARD_PASSWORD,
     APPROVAL_DASHBOARD_URL,
+    GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_ALLOWED_DOMAINS, GOOGLE_REDIRECT_URI,
 )
 from storage import StorageBackend
 from notifications import send_welcome_email, send_password_reset_email
@@ -422,6 +423,7 @@ _dashboard_config = {
     "watch_namespaces": WATCH_NAMESPACES if not WATCH_ALL_NAMESPACES else ["*"],
     "provider_chain": DIAGNOSIS_PROVIDER_CHAIN,
     "events_enabled": WATCH_EVENTS_ENABLED,
+    "google_sso": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
 }
 
 
@@ -499,99 +501,161 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0e17">
 <title>Healix — Login</title>
 <style>
   :root {
-    --bg: #0a0e17; --surface: rgba(22,27,34,0.75); --border: rgba(48,54,61,0.6);
-    --text: #e6edf3; --text2: #8b949e; --blue: #58a6ff; --red: #f85149;
-    --green: #3fb950;
+    --bg: #0a0e17; --surface: rgba(22,27,34,0.6); --border: rgba(48,54,61,0.5);
+    --text: #e6edf3; --text2: #8b949e; --text3: #484f58;
+    --blue: #58a6ff; --red: #f85149; --green: #3fb950;
+    --input-bg: rgba(13,17,23,0.6);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--text); min-height: 100vh;
     display: flex; align-items: center; justify-content: center;
-    background-image: radial-gradient(ellipse at 20% 50%, rgba(88,166,255,0.04) 0%, transparent 50%),
-                      radial-gradient(ellipse at 80% 20%, rgba(188,140,255,0.03) 0%, transparent 50%);
+    overflow: hidden;
+    position: relative;
   }
-  @keyframes fadeInUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+  .login-grid {
+    position: fixed; inset: 0; z-index: 0;
+    background-image:
+      linear-gradient(rgba(48,54,61,0.15) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(48,54,61,0.15) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(ellipse at 50% 50%, black 30%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 50%, black 30%, transparent 70%);
+  }
+  .login-glow {
+    position: fixed; border-radius: 50%; filter: blur(100px); pointer-events: none; z-index: 0;
+  }
+  .login-glow:nth-child(1) { width: 600px; height: 600px; background: rgba(88,166,255,0.08); top: -20%; left: -10%; }
+  .login-glow:nth-child(2) { width: 500px; height: 500px; background: rgba(188,140,255,0.06); bottom: -15%; right: -10%; }
+  @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
   .login-card {
-    width: 100%; max-width: 380px; padding: 40px 36px;
-    background: rgba(22,27,34,0.6); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(48,54,61,0.4); border-radius: 16px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-    animation: fadeInUp 0.5s ease;
+    width: 100%; max-width: 460px; padding: 52px 48px 44px;
+    background: rgba(22,27,34,0.55); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(48,54,61,0.35); border-radius: 20px;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+    animation: fadeInUp 0.6s ease; position: relative; z-index: 1;
   }
   .login-brand { text-align: center; margin-bottom: 32px; }
-  .login-brand svg { width: 48px; height: 48px; margin-bottom: 12px; }
-  .login-brand h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 4px; }
-  .login-brand p { font-size: 13px; color: var(--text2); }
+  .login-brand .logo-wrap {
+    width: 64px; height: 64px; margin: 0 auto 16px;
+    background: linear-gradient(135deg, rgba(88,166,255,0.15), rgba(88,166,255,0.05));
+    border-radius: 18px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(88,166,255,0.15); animation: float 4s ease-in-out infinite;
+  }
+  .login-brand .logo-wrap svg { width: 32px; height: 32px; color: var(--blue); }
+  .login-brand h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
+  .login-brand p { font-size: 14px; color: var(--text2); }
   .login-field { margin-bottom: 16px; }
-  .login-field label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .login-field label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600; color: var(--text2);
+    letter-spacing: 0.3px; margin-bottom: 6px;
+  }
+  .login-field label svg { width: 15px; height: 15px; opacity: 0.6; }
   .login-field input {
-    width: 100%; padding: 10px 14px; font-size: 14px; color: var(--text);
-    background: rgba(13,17,23,0.8); border: 1px solid rgba(48,54,61,0.6);
-    border-radius: 8px; outline: none; transition: border-color 0.2s;
+    width: 100%; padding: 13px 16px; font-size: 15px; color: var(--text);
+    background: var(--input-bg); border: 1px solid rgba(48,54,61,0.5);
+    border-radius: 10px; outline: none; transition: all 0.2s;
   }
-  .login-field input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(88,166,255,0.1); }
+  .login-field input:hover { border-color: rgba(48,54,61,0.8); }
+  .login-field input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(88,166,255,0.12), 0 0 20px rgba(88,166,255,0.05); }
+  .login-field input::placeholder { color: var(--text3); font-size: 14px; }
   .login-btn {
-    width: 100%; padding: 11px 0; margin-top: 8px; font-size: 14px; font-weight: 600;
+    width: 100%; padding: 14px 0; margin-top: 6px; font-size: 15px; font-weight: 600;
     color: #fff; background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
-    border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s;
+    border: none; border-radius: 10px; cursor: pointer; transition: all 0.25s;
+    position: relative; overflow: hidden;
   }
-  .login-btn:hover { background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%); box-shadow: 0 4px 16px rgba(46,160,67,0.3); }
+  .login-btn:hover { background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%); box-shadow: 0 6px 24px rgba(46,160,67,0.3); transform: translateY(-1px); }
   .login-btn:active { transform: scale(0.98); }
+  .login-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+  .login-btn .spinner {
+    display: none; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite;
+    margin: 0 auto;
+  }
   .login-error {
     margin-top: 12px; padding: 10px 14px; font-size: 13px; color: var(--red);
     background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2);
-    border-radius: 8px; text-align: center; display: none;
+    border-radius: 10px; text-align: center; display: none;
   }
-  .login-bg-bolt {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-    pointer-events: none; z-index: 0; opacity: 0.12; color: var(--blue);
+  .login-divider { display: flex; align-items: center; gap: 16px; margin: 20px 0; color: var(--text3); font-size: 13px; }
+  .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, rgba(48,54,61,0.5), transparent); }
+  .google-btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 13px; border-radius: 10px;
+    border: 1px solid rgba(48,54,61,0.4); background: rgba(22,27,34,0.4);
+    color: var(--text); font-size: 15px; font-weight: 500;
+    text-decoration: none; transition: all 0.2s;
   }
-  .login-bg-bolt svg { width: 90vmin; height: 90vmin; animation: spin 12s linear infinite; filter: drop-shadow(0 0 40px var(--blue)); }
+  .google-btn:hover { background: rgba(48,54,61,0.3); border-color: var(--blue); box-shadow: 0 0 20px rgba(88,166,255,0.06); }
+  .login-footer { text-align: center; margin-top: 20px; }
+  .login-footer a { color: var(--text2); font-size: 14px; text-decoration: none; transition: color 0.2s; }
+  .login-footer a:hover { color: var(--blue); }
+  .login-footer .sep { color: var(--text3); margin: 0 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<div class="login-bg-bolt">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" xmlns="http://www.w3.org/2000/svg">
-    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-  </svg>
-</div>
+<div class="login-glow"></div>
+<div class="login-glow"></div>
+<div class="login-grid"></div>
 <div class="login-card">
   <div class="login-brand">
-    <a href="/" style="text-decoration:none;color:inherit">
-    <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="24" cy="24" r="22" stroke="rgba(88,166,255,0.3)" stroke-width="2"/>
-      <path d="M16 24l6 6 10-12" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
+    <div class="logo-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </div>
     <h1>Healix</h1>
-    <p>Dashboard Login</p>
-    </a>
+    <p>AI-Powered Self-Healing Platform</p>
   </div>
   <form id="loginForm" onsubmit="return doLogin(event)">
     <div class="login-field">
-      <label for="username">Username</label>
-      <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+      <label>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+        Username
+      </label>
+      <input type="text" id="username" name="username" placeholder="Enter your username" autocomplete="username" required autofocus>
     </div>
     <div class="login-field">
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <label>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Password
+      </label>
+      <input type="password" id="password" name="password" placeholder="Enter your password" autocomplete="current-password" required>
     </div>
     <div class="login-error" id="loginError"></div>
-    <button type="submit" class="login-btn">Sign In</button>
-    <div style="margin-top:16px;text-align:center">
-      <a href="/forgot" style="color:var(--text2);font-size:13px;text-decoration:none">Forgot Password?</a>
+    <button type="submit" class="login-btn" id="loginBtn"><span id="loginBtnText">Sign In</span><div class="spinner" id="loginSpinner"></div></button>
+    <div class="login-footer">
+      <a href="/forgot">Forgot password?</a>
     </div>
   </form>
+  <div class="login-divider"><span>or continue with</span></div>
+  <a href="/auth/google" class="google-btn">
+    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+    Sign in with Google
+  </a>
 </div>
 <script>
 function doLogin(e) {
   e.preventDefault();
   var errEl = document.getElementById('loginError');
+  var btn = document.getElementById('loginBtn');
+  var btnText = document.getElementById('loginBtnText');
+  var spinner = document.getElementById('loginSpinner');
   errEl.style.display = 'none';
+  btn.disabled = true;
+  btnText.style.display = 'none';
+  spinner.style.display = 'block';
   var u = document.getElementById('username').value;
   var p = document.getElementById('password').value;
   var body = 'username=' + encodeURIComponent(u) + '&password=' + encodeURIComponent(p);
@@ -607,11 +671,17 @@ function doLogin(e) {
       return r.json();
     }
   }).then(function(j) {
+    btn.disabled = false;
+    btnText.style.display = '';
+    spinner.style.display = 'none';
     if (j && j.error) {
       errEl.textContent = j.error;
       errEl.style.display = 'block';
     }
   }).catch(function() {
+    btn.disabled = false;
+    btnText.style.display = '';
+    spinner.style.display = 'none';
     errEl.textContent = 'Connection failed';
     errEl.style.display = 'block';
   });
@@ -631,6 +701,7 @@ _FORGOT_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0e17">
 <title>Healix — Forgot Password</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -695,6 +766,7 @@ _RESET_HTML_PREFIX = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0e17">
 <title>Healix — Reset Password</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -761,6 +833,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" id="metaThemeColor" content="#0a0e17">
 <title>Healix — Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -797,7 +870,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     --hover-tint: rgba(9,105,218,0.06);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; font-weight: 450; }
 
   /* ── Animated Background ────────────────────────── */
   .bg-canvas { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
@@ -847,6 +920,15 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .hdr-pill strong { color: var(--text); font-weight: 600; }
   .hdr-spacer { flex: 1; }
   .hdr-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .hdr-user { display: flex; align-items: center; gap: 8px; }
+  .hdr-avatar { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--glass-border); object-fit: cover; }
+  .hdr-email { font-size: 12px; color: var(--text2); white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+  .hdr-report-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent; color: var(--text2); cursor: pointer; transition: all 0.2s; }
+  .hdr-report-btn:hover { background: var(--hover-tint); color: var(--blue); }
+  .clr-picker { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 8px; border: 1px solid var(--glass-border); background: var(--surface2); }
+  .clr-dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; transition: all 0.2s; }
+  .clr-dot:hover { transform: scale(1.25); }
+  .clr-dot.active { border-color: var(--text); box-shadow: 0 0 6px rgba(255,255,255,0.2); }
   .hdr-time { font-size: 11px; color: var(--text2); font-family: var(--font-mono); }
   .hdr-clock-toggle { cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: background 0.2s; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); font-family: var(--font-mono); border: 1px solid var(--glass-border); }
   .hdr-clock-toggle:hover { background: var(--hover-tint); color: var(--text); }
@@ -1279,7 +1361,22 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   </div>
   <div class="hdr-spacer"></div>
   <div class="hdr-right">
+    <div class="hdr-user" id="hdr-user" style="display:none">
+      <img class="hdr-avatar" id="hdr-avatar" src="" alt="">
+      <span class="hdr-email" id="hdr-email"></span>
+    </div>
     <span class="hdr-clock-toggle" id="hdr-clock-toggle" onclick="toggleTimezone()"><span id="hdr-clock"></span><span class="tz-label" id="hdr-tz">LOCAL</span></span>
+    <button class="hdr-report-btn" onclick="downloadWeeklyReport()" title="Download Weekly Report">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+    <div class="clr-picker" id="clr-picker">
+      <button class="clr-dot active" data-clr="blue" style="background:#58a6ff" onclick="setColorTheme('blue')" title="Blue"></button>
+      <button class="clr-dot" data-clr="purple" style="background:#bc8cff" onclick="setColorTheme('purple')" title="Purple"></button>
+      <button class="clr-dot" data-clr="green" style="background:#3fb950" onclick="setColorTheme('green')" title="Green"></button>
+      <button class="clr-dot" data-clr="orange" style="background:#f0883e" onclick="setColorTheme('orange')" title="Orange"></button>
+      <button class="clr-dot" data-clr="red" style="background:#f85149" onclick="setColorTheme('red')" title="Red"></button>
+      <button class="clr-dot" data-clr="teal" style="background:#39d2c0" onclick="setColorTheme('teal')" title="Teal"></button>
+    </div>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
       <svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
@@ -1672,10 +1769,33 @@ function toggleTimezone() {
 }
 function toggleTheme() {
   document.documentElement.classList.toggle('light');
-  localStorage.setItem('dashboard_theme', document.documentElement.classList.contains('light') ? 'light' : 'dark');
+  var isLight = document.documentElement.classList.contains('light');
+  localStorage.setItem('dashboard_theme', isLight ? 'light' : 'dark');
+  document.getElementById('metaThemeColor').content = isLight ? '#ffffff' : '#0a0e17';
+  var sc = localStorage.getItem('dashboard_color');
+  if (sc) setColorTheme(sc);
   if (_selectedTab === 'metrics' && _lastMetricsData) { destroyAllMetricCharts(); buildAllMetricCharts(_lastMetricsData, _lastDiagsData); }
 }
-if (localStorage.getItem('dashboard_theme') === 'light') document.documentElement.classList.add('light');
+var _colorThemes = {
+  blue:   {blue:'#58a6ff', dark:'#58a6ff', light:'#0969da'},
+  purple: {blue:'#bc8cff', dark:'#bc8cff', light:'#8250df'},
+  green:  {blue:'#3fb950', dark:'#3fb950', light:'#1a7f37'},
+  orange: {blue:'#f0883e', dark:'#f0883e', light:'#bc4c00'},
+  red:    {blue:'#f85149', dark:'#f85149', light:'#cf222e'},
+  teal:   {blue:'#39d2c0', dark:'#39d2c0', light:'#0e7c6b'},
+};
+function setColorTheme(name) {
+  var t = _colorThemes[name] || _colorThemes.blue;
+  var isLight = document.documentElement.classList.contains('light');
+  var c = isLight ? t.light : t.dark;
+  document.documentElement.style.setProperty('--blue', c);
+  document.querySelectorAll('.clr-dot').forEach(function(b){b.classList.toggle('active',b.dataset.clr===name);});
+  localStorage.setItem('dashboard_color', name);
+  if (_selectedTab === 'metrics' && _lastMetricsData) { destroyAllMetricCharts(); buildAllMetricCharts(_lastMetricsData, _lastDiagsData); }
+}
+var _savedColor = localStorage.getItem('dashboard_color');
+if (_savedColor && _colorThemes[_savedColor]) setColorTheme(_savedColor);
+document.documentElement.classList.remove('light');
 if (typeof Chart !== 'undefined') { var _tc = getChartColors(); Chart.defaults.color = _tc.text; Chart.defaults.borderColor = _tc.border; Chart.defaults.devicePixelRatio = window.devicePixelRatio || 1; if (Chart.register) { try { Chart.register(ChartZoom); } catch(e){} try { Chart.register(ChartAnnotation); } catch(e){} } }
 setInterval(updateClock, 1000);
 updateClock();
@@ -2701,6 +2821,13 @@ function checkUserPermissions(cb) {
         switchTab('overview');
       }
     }
+    if (d && d.google_user) {
+      var g = d.google_user;
+      var el = document.getElementById('hdr-user');
+      document.getElementById('hdr-avatar').src = g.picture || '';
+      document.getElementById('hdr-email').textContent = g.email || '';
+      el.style.display = 'flex';
+    }
     if (cb) cb();
   }).catch(function(){if (cb) cb();});
 }
@@ -2757,6 +2884,15 @@ function submitChangePw() {
 document.addEventListener('click', function(e) {
   if (e.target.classList.contains('modal-overlay')) closeChangePwModal();
 });
+
+function downloadWeeklyReport() {
+  var a = document.createElement('a');
+  a.href = '/api/report/weekly';
+  a.download = 'healix-weekly-report.pdf';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 
 function poll() {
   checkUserPermissions(function() {
@@ -2844,6 +2980,114 @@ def mark_unhealthy() -> None:
     _health_state.is_healthy = False
 
 
+def _generate_weekly_pdf() -> bytes:
+    now = time.time()
+    week_ago = now - 7 * 86400
+    all_recs = diagnosis_store.to_list()
+    week_recs = [r for r in all_recs if _ts_to_epoch(r.get("timestamp", "")) >= week_ago]
+    total = len(week_recs)
+    success = sum(1 for r in week_recs if r.get("success"))
+    failed = total - success
+    platforms: dict[str, int] = {}
+    routes: dict[str, int] = {}
+    top_pods: dict[str, int] = {}
+    for r in week_recs:
+        p = r.get("platform", "unknown")
+        platforms[p] = platforms.get(p, 0) + 1
+        rt = r.get("route", "unknown")
+        routes[rt] = routes.get(rt, 0) + 1
+        pod = r.get("name", "unknown")
+        top_pods[pod] = top_pods.get(pod, 0) + 1
+    top_pods = dict(sorted(top_pods.items(), key=lambda x: -x[1])[:10])
+
+    lines = []
+    lines.append("Healix - Weekly Heal Summary")
+    lines.append("=" * 50)
+    lines.append("Generated: " + time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(now)))
+    lines.append("Period: " + time.strftime("%Y-%m-%d", time.gmtime(week_ago)) + " - " + time.strftime("%Y-%m-%d", time.gmtime(now)))
+    lines.append("")
+    lines.append("Summary")
+    lines.append("-" * 20)
+    lines.append(f"  Total Incidents:  {total}")
+    lines.append(f"  Successful Heals: {success}")
+    lines.append(f"  Failed:           {failed}")
+    lines.append(f"  Success Rate:     {success / total * 100:.0f}%" if total else "N/A")
+    lines.append("")
+    if platforms:
+        lines.append("By Platform")
+        lines.append("-" * 15)
+        for p, c in sorted(platforms.items(), key=lambda x: -x[1]):
+            lines.append(f"  {p}: {c}")
+        lines.append("")
+    if routes:
+        lines.append("Actions by Route")
+        lines.append("-" * 20)
+        for r, c in sorted(routes.items(), key=lambda x: -x[1]):
+            lines.append(f"  {r}: {c}")
+        lines.append("")
+    if top_pods:
+        lines.append("Most Affected Resources")
+        lines.append("-" * 25)
+        for n, c in top_pods.items():
+            lines.append(f"  {n}: {c} incidents")
+        lines.append("")
+    lines.append("Recent Activity (last 20)")
+    lines.append("-" * 40)
+    header = f"{'#':>3}  {'Date':<12}  {'Resource':<20}  {'Platform':<10}  {'Status':<6}  Action"
+    lines.append(header)
+    lines.append("-" * 80)
+    for idx, r in enumerate(week_recs[:20]):
+        ts = (r.get("timestamp") or "")[-14:-9] if r.get("timestamp") else "--"
+        nm = (r.get("name") or "")[:18]
+        pl = (r.get("platform") or "")[:8]
+        st = "OK" if r.get("success") else "FAIL"
+        ac = (r.get("action") or "")[:28]
+        lines.append(f"{idx+1:>3}  {ts:<12}  {nm:<20}  {pl:<10}  {st:<6}  {ac}")
+    lines.append("")
+    lines.append("=" * 50)
+    lines.append("Healix - AI-Powered Self-Healing Platform")
+
+    text = "\n".join(lines)
+    return _make_pdf(text)
+
+
+def _make_pdf(text: str) -> bytes:
+    import zlib
+    content = zlib.compress(text.encode("utf-8"))
+    objects = [
+        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj",
+        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R"
+        b"/Resources<</Font<</F1 5 0 R>>>>>>endobj",
+        b"4 0 obj<</Length " + str(len(content)).encode() + b"/Filter/FlateDecode>>stream\n"
+        + content + b"\nendstream\nendobj",
+        b"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Courier>>endobj",
+    ]
+    body = b"\n".join(objects)
+    header = b"%PDF-1.4\n"
+    pre_xref = header + body + b"\n"
+    offsets = [0]
+    pos = len(header)
+    for obj in objects:
+        offsets.append(pos)
+        pos += len(obj) + 1
+    xref = b"xref\n0 6\n"
+    xref += f"{offsets[0]:010d} 65535 f \n".encode()
+    for i in range(1, 6):
+        xref += f"{offsets[i]:010d} 00000 n \n".encode()
+    xref += b"trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n"
+    xref += str(len(pre_xref)).encode() + b"\n%%EOF"
+    return pre_xref + xref
+
+
+def _ts_to_epoch(ts: str) -> float:
+    try:
+        t = ts.replace(" UTC", "").strip()
+        return time.mktime(time.strptime(t, "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, OSError):
+        return 0
+
+
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -2855,6 +3099,103 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/login" or self.path == "/":
             self._respond_html(200, _LOGIN_HTML)
+
+        elif self.path == "/auth/google":
+            if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+                self._respond(400, {"error": "Google SSO not configured"})
+                return
+            redirect_uri = GOOGLE_REDIRECT_URI or (
+                "http://" + self.headers.get("Host", "localhost:" + str(HEALTH_PORT)) + "/auth/google/callback"
+            )
+            params = urllib.parse.urlencode({
+                "client_id": GOOGLE_CLIENT_ID,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "scope": "openid email profile",
+                "access_type": "online",
+                "prompt": "select_account",
+            })
+            self.send_response(302)
+            self.send_header("Location", "https://accounts.google.com/o/oauth2/v2/auth?" + params)
+            self.end_headers()
+
+        elif self.path.startswith("/auth/google/callback"):
+            if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+                self._respond_html(200, "<html><body><h2>Google SSO not configured</h2></body></html>")
+                return
+            qs = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(qs)
+            code = params.get("code", [None])[0]
+            error = params.get("error", [None])[0]
+            if error or not code:
+                self._respond_html(200, f"<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Google Sign-In Failed</h2><p style='color:#8b949e'>{error or 'No authorization code received'}</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                return
+            try:
+                redirect_uri = GOOGLE_REDIRECT_URI or (
+                    "http://" + self.headers.get("Host", "localhost:" + str(HEALTH_PORT)) + "/auth/google/callback"
+                )
+                resp = requests.post("https://oauth2.googleapis.com/token", data={
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                }, timeout=10)
+                token_data = resp.json()
+                id_token = token_data.get("id_token")
+                if not id_token:
+                    self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Failed</h2><p style='color:#8b949e'>Could not verify identity</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    return
+                payload_b64 = id_token.split(".")[1]
+                pad = 4 - len(payload_b64) % 4
+                if pad != 4:
+                    payload_b64 += "=" * pad
+                import base64
+                decoded = json.loads(base64.urlsafe_b64decode(payload_b64))
+                email = decoded.get("email", "")
+                name = decoded.get("name", email.split("@")[0])
+                picture = decoded.get("picture", "")
+                email_domain = email.split("@")[-1] if "@" in email else ""
+                allowed_domains = [d.strip() for d in GOOGLE_ALLOWED_DOMAINS.split(",") if d.strip()]
+                if email_domain not in allowed_domains:
+                    self._respond_html(200, f"<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Access Denied</h2><p style='color:#8b949e'>Only @thewitslab.com and @marblex.ai email addresses are allowed.</p><p style='color:#8b949e;font-size:13px'>Your email: {email}</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    return
+                username = email.split("@")[0] + "@" + email_domain
+                user = None
+                if _storage:
+                    user = _storage.get_user_by_email(email)
+                    if not user:
+                        import secrets as _secrets
+                        rand_password = _secrets.token_urlsafe(12)
+                        user = _storage.create_user(
+                            username=username, email=email, password=rand_password,
+                            can_view_dashboard=True, can_view_pods=True,
+                            can_view_containers=True, can_view_approvals=False,
+                            can_approve=False, can_admin=False,
+                        )
+                    if user:
+                        perms = {
+                            "can_view_dashboard": user.get("can_view_dashboard", True),
+                            "can_view_pods": user.get("can_view_pods", True),
+                            "can_view_containers": user.get("can_view_containers", True),
+                            "can_view_approvals": user.get("can_view_approvals", False),
+                            "can_approve": user.get("can_approve", False),
+                            "can_admin": user.get("can_admin", False),
+                        }
+                        _prune_sessions()
+                        token = _generate_session_token(username, perms)
+                        _sessions[token]["google_user"] = {
+                            "email": email, "name": name, "picture": picture,
+                        }
+                        self.send_response(302)
+                        self.send_header("Location", "/metrics")
+                        self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Lax")
+                        self.end_headers()
+                        return
+                self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Account Setup Failed</h2><p style='color:#8b949e'>Could not create or find your account.</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+            except Exception as e:
+                log.error("Google SSO error: %s", e)
+                self._respond_html(200, f"<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Error</h2><p style='color:#8b949e'>Something went wrong. Please try again.</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
 
         elif self.path == "/forgot":
             self._respond_html(200, _FORGOT_HTML)
@@ -2882,6 +3223,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 self._respond(200, {
                     "username": session["username"],
                     "perms": session["perms"],
+                    "google_user": session.get("google_user"),
                 })
             else:
                 self._respond(401, {"error": "unauthorized"})
@@ -2956,6 +3298,23 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        elif self.path == "/api/report/weekly" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _validate_session(cookie):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            try:
+                pdf_bytes = _generate_weekly_pdf()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/pdf")
+                self.send_header("Content-Disposition", f'attachment; filename="healix-weekly-{time.strftime("%Y%m%d")}.pdf"')
+                self.send_header("Content-Length", str(len(pdf_bytes)))
+                self.end_headers()
+                self.wfile.write(pdf_bytes)
+            except Exception as e:
+                log.error("PDF report error: %s", e)
+                self._respond(500, {"error": "Failed to generate report"})
 
         elif self.path == "/approvals" and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")
@@ -3057,7 +3416,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 token = _generate_session_token(username, perms)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Strict")
+                self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Lax")
                 body = json.dumps({"ok": True}).encode()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -3073,7 +3432,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                     if len(kv) == 2 and kv[0] == "session_id":
                         _sessions.pop(kv[1], None)
             self.send_response(200)
-            self.send_header("Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+            self.send_header("Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
             body = json.dumps({"ok": True}).encode()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
