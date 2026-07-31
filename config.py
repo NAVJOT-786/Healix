@@ -137,7 +137,7 @@ WATCH_EVENTS_DEBOUNCE_SEC = int(os.getenv("WATCH_EVENTS_DEBOUNCE_SEC", "300"))
 
 HEALTH_PORT    = int(os.getenv("HEALTH_PORT", "8080"))
 METRICS_ENABLED = os.getenv("METRICS_ENABLED", "true").lower() == "true"
-DIAGNOSIS_HISTORY_SIZE = int(os.getenv("DIAGNOSIS_HISTORY_SIZE", "50"))
+DIAGNOSIS_HISTORY_SIZE = int(os.getenv("DIAGNOSIS_HISTORY_SIZE", "200"))
 
 # ── Dashboard Auth ───────────────────────────────────────────────────────────
 
