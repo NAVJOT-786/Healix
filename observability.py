@@ -511,7 +511,7 @@ def _update_session_user(cookie_header: str, session: dict,
 # ══════════════════════════════════════════════════════════════════════════════
 
 _GOOGLE_SSO_BLOCK = """  <div class="login-divider"><span>or continue with</span></div>
-  <a href="/auth/google" class="google-btn">
+  <a href="/auth/google" class="google-btn" onclick="sessionStorage.setItem('healixFresh','1')">
     <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
     Sign in with Google
   </a>"""
@@ -720,6 +720,7 @@ function doLogin(e) {
     redirect: 'manual'
   }).then(function(r) {
     if (r.status === 200) {
+      sessionStorage.setItem('healixFresh', '1');
       window.location.href = '/metrics';
     } else {
       return r.json();
@@ -1473,6 +1474,11 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .boot-welcome { font-size: 22px; font-weight: 800; color: #e6edf3; letter-spacing: -0.5px; opacity: 0; transform: translateY(8px); transition: opacity 0.45s ease, transform 0.45s ease; }
   .boot-welcome span { color: var(--blue, #58a6ff); }
   .boot-welcome.show { opacity: 1; transform: translateY(0); }
+  #boot-splash.spin .boot-shard-wrap { animation: bootSpin 1.6s linear infinite; }
+  #boot-splash.spin .boot-shard { animation: none; opacity: 1; }
+  #boot-splash.spin .boot-crack, #boot-splash.spin .boot-glow,
+  #boot-splash.spin .boot-status, #boot-splash.spin .boot-welcome { display: none; }
+  @keyframes bootSpin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -1503,6 +1509,14 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 (function() {
   var s = document.getElementById('boot-splash');
   if (!s) return;
+  var fresh = false;
+  try { fresh = sessionStorage.getItem('healixFresh') === '1'; sessionStorage.removeItem('healixFresh'); } catch(e) {}
+  if (!fresh) {
+    s.classList.add('spin');
+    setTimeout(function() { s.classList.add('fade'); }, 1100);
+    setTimeout(function() { if (s.parentNode) s.parentNode.removeChild(s); }, 1750);
+    return;
+  }
   var dots = document.getElementById('boot-dots'), n = 0;
   var dint = setInterval(function() { n = (n + 1) % 4; dots.textContent = '.'.repeat(n); }, 350);
   fetch('/users/me').then(function(r){return r.json();}).then(function(d){
