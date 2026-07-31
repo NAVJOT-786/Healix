@@ -546,9 +546,20 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
     background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2);
     border-radius: 8px; text-align: center; display: none;
   }
+  .login-bg-bolt {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    pointer-events: none; z-index: 0; opacity: 0.12; color: var(--blue);
+  }
+  .login-bg-bolt svg { width: 90vmin; height: 90vmin; animation: spin 12s linear infinite; filter: drop-shadow(0 0 40px var(--blue)); }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
+<div class="login-bg-bolt">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" xmlns="http://www.w3.org/2000/svg">
+    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+  </svg>
+</div>
 <div class="login-card">
   <div class="login-brand">
     <a href="/" style="text-decoration:none;color:inherit">
@@ -786,7 +797,26 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     --hover-tint: rgba(9,105,218,0.06);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; background-image: radial-gradient(ellipse at 20% 50%, rgba(88,166,255,0.04) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(188,140,255,0.03) 0%, transparent 50%); }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+
+  /* ── Animated Background ────────────────────────── */
+  .bg-canvas { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+  .bg-gradient { position: absolute; inset: -50%; width: 200%; height: 200%; background: radial-gradient(ellipse 60% 50% at 15% 30%, rgba(88,166,255,0.08) 0%, transparent 60%), radial-gradient(ellipse 50% 40% at 80% 70%, rgba(188,140,255,0.06) 0%, transparent 60%), radial-gradient(ellipse 40% 30% at 50% 20%, rgba(57,210,192,0.04) 0%, transparent 50%); animation: bgShift 20s ease-in-out infinite alternate; }
+  @keyframes bgShift { 0% { transform: translate(0, 0) rotate(0deg); } 25% { transform: translate(2%, 1%) rotate(2deg); } 50% { transform: translate(-1%, 2%) rotate(-1deg); } 75% { transform: translate(1%, -1%) rotate(1deg); } 100% { transform: translate(-2%, -1%) rotate(-2deg); } }
+  .bg-orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.15; animation: orbFloat 12s ease-in-out infinite; }
+  .bg-orb:nth-child(1) { width: 500px; height: 500px; background: var(--blue); top: -10%; left: -5%; animation-delay: 0s; }
+  .bg-orb:nth-child(2) { width: 400px; height: 400px; background: var(--purple); bottom: -8%; right: -5%; animation-delay: -4s; }
+  .bg-orb:nth-child(3) { width: 300px; height: 300px; background: var(--cyan); top: 40%; left: 60%; animation-delay: -8s; }
+  .bg-orb:nth-child(4) { width: 200px; height: 200px; background: var(--orange); top: 60%; left: 10%; animation-delay: -2s; opacity: 0.08; }
+  @keyframes orbFloat { 0% { transform: translate(0, 0) scale(1); } 33% { transform: translate(30px, -20px) scale(1.05); } 66% { transform: translate(-20px, 15px) scale(0.95); } 100% { transform: translate(0, 0) scale(1); } }
+  .bg-grid { position: absolute; inset: 0; background-image: radial-gradient(circle, var(--border-subtle) 1px, transparent 1px); background-size: 40px 40px; opacity: 0.3; mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 20%, transparent 70%); -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 20%, transparent 70%); }
+  .light .bg-gradient { opacity: 0.5; }
+  .light .bg-orb { opacity: 0.06; }
+  .light .bg-grid { opacity: 0.15; }
+  .light .bg-particles { opacity: 0.3; }
+
+  /* ── Floating Particles ─────────────────────────── */
+  .bg-particles { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
   a { color: var(--blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
@@ -799,11 +829,13 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   @keyframes pulseOrange { 0%,100% { box-shadow: 0 0 0 rgba(240,136,62,0); border-color: var(--glass-border); } 50% { box-shadow: 0 0 16px 2px rgba(240,136,62,0.3); border-color: rgba(240,136,62,0.5); } }
   @keyframes glowGreen { 0%,100% { box-shadow: 0 0 0 rgba(63,185,80,0); } 50% { box-shadow: 0 0 14px 2px rgba(63,185,80,0.15); } }
   @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Fixed Header ──────────────────────────────── */
   .hdr { position: fixed; top: 0; left: 0; right: 0; z-index: 200; background: var(--header-bg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--glass-border); height: 60px; display: flex; align-items: center; padding: 0 28px; gap: 20px; }
   .hdr-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
   .hdr-brand svg { width: 28px; height: 28px; }
+  .logo-spin { animation: spin 4s linear infinite; }
   .hdr-brand h1 { font-size: 17px; font-weight: 800; color: var(--text); white-space: nowrap; letter-spacing: -0.3px; }
   .hdr-brand h1 span { color: var(--text2); font-weight: 400; font-size: 12px; margin-left: 6px; }
   .hdr-sep { width: 1px; height: 26px; background: var(--glass-border); flex-shrink: 0; }
@@ -1221,12 +1253,22 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 
+<div class="bg-canvas">
+  <div class="bg-gradient"></div>
+  <div class="bg-orb"></div>
+  <div class="bg-orb"></div>
+  <div class="bg-orb"></div>
+  <div class="bg-orb"></div>
+  <div class="bg-grid"></div>
+  <div class="bg-particles" id="bg-particles"></div>
+</div>
+
 <div id="toasts"></div>
 <div id="card-tooltip" class="card-tooltip"></div>
 
 <header class="hdr">
-  <div class="hdr-brand" onclick="switchTab('overview')" style="cursor:pointer">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+      <div class="hdr-brand" onclick="switchTab('overview')" style="cursor:pointer">
+    <svg class="logo-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
     <h1>Healix</h1>
   </div>
   <div class="hdr-sep"></div>
@@ -1511,6 +1553,111 @@ function fmtTimestamp(ts) {
   var d = new Date(parts[0] + 'T' + parts[1] + 'Z');
   return d.toLocaleString();
 }
+// ── Live Network Graph (Canvas-based) ───────────────────────────
+function initNetworkGraph() {
+  var container = document.getElementById('bg-particles');
+  if (!container || container._initialized) return;
+  container._initialized = true;
+  var canvas = document.createElement('canvas');
+  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none';
+  container.appendChild(canvas);
+  var ctx = canvas.getContext('2d');
+  var W, H;
+  function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+  window.addEventListener('resize', resize);
+  resize();
+  var nodeCount = 60;
+  var nodes = [];
+  for (var i = 0; i < nodeCount; i++) {
+    var angle = Math.random() * Math.PI * 2;
+    var radius = 50 + Math.random() * Math.min(W, H) * 0.4;
+    nodes.push({
+      cx: W/2 + Math.cos(angle) * radius,
+      cy: H/2 + Math.sin(angle) * radius,
+      size: 1.5 + Math.random() * 2.5,
+      speed: 0.08 + Math.random() * 0.15,
+      orbitRadius: radius,
+      drift: 0.2 + Math.random() * 0.5,
+      phase: Math.random() * Math.PI * 2,
+      opacity: 0.2 + Math.random() * 0.4,
+    });
+  }
+  var connections = [];
+  for (var i = 0; i < nodeCount; i++) {
+    for (var j = i + 1; j < nodeCount; j++) {
+      var dx = nodes[i].cx - nodes[j].cx;
+      var dy = nodes[i].cy - nodes[j].cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < Math.min(W, H) * 0.35 && Math.random() < 0.35) {
+        connections.push({ a: i, b: j, maxDist: dist });
+      }
+    }
+  }
+  var startTime = Date.now();
+  var mouse = { x: W/2, y: H/2, active: false };
+  canvas.addEventListener('mousemove', function(e) {
+    mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true;
+  });
+  canvas.addEventListener('mouseleave', function() { mouse.active = false; });
+  function animate() {
+    var t = (Date.now() - startTime) / 1000;
+    ctx.clearRect(0, 0, W, H);
+    var isLight = document.documentElement.classList.contains('light');
+    var col = isLight ? '150,170,200' : '255,255,255';
+    var am = isLight ? 0.25 : 1;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      n.cx = W/2 + Math.cos(t * n.speed + n.phase) * n.orbitRadius;
+      n.cy = H/2 + Math.sin(t * n.speed * 0.8 + n.phase * 1.2) * (n.orbitRadius * 0.8);
+      n.cx += Math.sin(t * n.drift + n.phase) * 20;
+      n.cy += Math.cos(t * n.drift * 0.7 + n.phase) * 15;
+    }
+    for (var i = 0; i < connections.length; i++) {
+      var conn = connections[i];
+      var na = nodes[conn.a], nb = nodes[conn.b];
+      var dx = na.cx - nb.cx, dy = na.cy - nb.cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < conn.maxDist * 1.8) {
+        var alpha = (1 - dist / (conn.maxDist * 1.8)) * 0.25 * am;
+        if (mouse.active) {
+          var mdx = (na.cx + nb.cx) / 2 - mouse.x;
+          var mdy = (na.cy + nb.cy) / 2 - mouse.y;
+          var mDist = Math.sqrt(mdx * mdx + mdy * mdy);
+          if (mDist < 200) alpha += (1 - mDist / 200) * 0.35 * am;
+        }
+        ctx.strokeStyle = 'rgba(' + col + ',' + Math.min(alpha, 0.5) + ')';
+        ctx.lineWidth = 0.5 + alpha * 1.5;
+        ctx.beginPath();
+        ctx.moveTo(na.cx, na.cy);
+        ctx.lineTo(nb.cx, nb.cy);
+        ctx.stroke();
+      }
+    }
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var alpha = n.opacity;
+      if (mouse.active) {
+        var mdx = n.cx - mouse.x, mdy = n.cy - mouse.y;
+        var mDist = Math.sqrt(mdx * mdx + mdy * mdy);
+        if (mDist < 150) alpha += (1 - mDist / 150) * 0.5;
+      }
+      ctx.fillStyle = 'rgba(' + col + ',' + Math.min(alpha * am, 0.8) + ')';
+      ctx.beginPath();
+      ctx.arc(n.cx, n.cy, n.size, 0, Math.PI * 2);
+      ctx.fill();
+      var glow = ctx.createRadialGradient(n.cx, n.cy, 0, n.cx, n.cy, n.size * 4);
+      glow.addColorStop(0, 'rgba(' + col + ',0.06)');
+      glow.addColorStop(1, 'rgba(' + col + ',0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(n.cx, n.cy, n.size * 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+window.addEventListener('load', initNetworkGraph);
 function toggleTimezone() {
   _useUTC = !_useUTC;
   localStorage.setItem('dashboard_tz', _useUTC ? 'utc' : 'local');
