@@ -144,6 +144,13 @@ DIAGNOSIS_HISTORY_SIZE = int(os.getenv("DIAGNOSIS_HISTORY_SIZE", "50"))
 DASHBOARD_USER     = os.getenv("DASHBOARD_USER", "admin")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin")
 
+# ── Google SSO ────────────────────────────────────────────────────────────────
+
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_ALLOWED_DOMAINS = os.getenv("GOOGLE_ALLOWED_DOMAINS", "thewitslab.com,marblex.ai")
+GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "")
+
 # ── Cost Estimation ───────────────────────────────────────────────────────────
 
 COST_PER_GB_HOUR = float(os.getenv("COST_PER_GB_HOUR", "0.0000016"))
