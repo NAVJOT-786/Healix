@@ -103,6 +103,7 @@ class StorageBackend:
                 ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE;
                 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_containers BOOLEAN DEFAULT FALSE;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_pic TEXT;
                 CREATE INDEX IF NOT EXISTS idx_diagnoses_route ON diagnoses(route);
                 CREATE INDEX IF NOT EXISTS idx_diagnoses_deleted ON diagnoses(deleted);
                 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
@@ -527,6 +528,31 @@ class StorageBackend:
                         (pwh, user_id))
             conn.commit()
             return cur.rowcount > 0
+        finally:
+            self._put(conn)
+
+    def update_user_profile(self, user_id: int, username: str | None = None,
+                            profile_pic: str | None = None) -> bool:
+        sets = []
+        params = []
+        if username is not None:
+            sets.append("username = %s")
+            params.append(username)
+        if profile_pic is not None:
+            sets.append("profile_pic = %s")
+            params.append(profile_pic)
+        if not sets:
+            return False
+        params.append(user_id)
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"UPDATE users SET {', '.join(sets)}, updated_at = NOW() WHERE id = %s", params)
+            conn.commit()
+            return cur.rowcount > 0
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            return False
         finally:
             self._put(conn)
 

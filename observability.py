@@ -493,6 +493,18 @@ def _refresh_user_sessions(user_id: int) -> None:
         if s.get("username") == target["username"]:
             s["perms"] = new_perms
 
+def _update_session_user(cookie_header: str, session: dict,
+                         username: str | None = None,
+                         profile_pic: str | None = None) -> None:
+    old = session.get("username")
+    if username is not None and username != old:
+        session["username"] = username
+        for s in _sessions.values():
+            if s is not session and s.get("username") == old:
+                s["username"] = username
+    if profile_pic is not None:
+        session["profile_pic"] = profile_pic
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  LOGIN PAGE HTML
 # ══════════════════════════════════════════════════════════════════════════════
@@ -612,9 +624,40 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
   .login-footer a:hover { color: var(--blue); }
   .login-footer .sep { color: var(--text3); margin: 0 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Grafana-style Splash Loader ────────────────── */
+  #login-splash {
+    position: fixed; inset: 0; z-index: 9999; background: #0a0e17;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; transition: opacity 0.55s ease; will-change: opacity;
+  }
+  #login-splash.fade { opacity: 0; pointer-events: none; }
+  .splash-logo { position: relative; display: flex; align-items: center; justify-content: center; animation: splashBounce 1.15s ease-in-out infinite; }
+  .splash-logo svg { width: 72px; height: 72px; color: var(--blue); filter: drop-shadow(0 0 14px rgba(88,166,255,0.4)); }
+  .splash-ring { position: absolute; inset: -12px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--blue); border-right-color: rgba(188,140,255,0.6); animation: spin 1.4s linear infinite; opacity: 0.7; }
+  @keyframes splashBounce {
+    0%, 100% { transform: translateY(0) scale(1); }
+    42% { transform: translateY(-26px) scale(1.06); }
+    62% { transform: translateY(0) scale(0.97); }
+  }
+  .splash-brand { font-size: 26px; font-weight: 800; color: #e6edf3; letter-spacing: -0.5px; }
+  .splash-brand span { color: var(--blue); }
+  .splash-sub { font-size: 12px; color: #8b949e; letter-spacing: 2.5px; text-transform: uppercase; }
 </style>
 </head>
 <body>
+<div id="login-splash">
+  <div class="splash-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </svg>
+    <div class="splash-ring"></div>
+  </div>
+  <div class="splash-brand">Healix</div>
+  <div class="splash-sub">AI-Powered Self-Healing Platform</div>
+</div>
 <div class="login-glow"></div>
 <div class="login-glow"></div>
 <div class="login-grid"></div>
@@ -697,6 +740,14 @@ function doLogin(e) {
   });
   return false;
 }
+
+window.addEventListener('load', function() {
+  setTimeout(function() {
+    var s = document.getElementById('login-splash');
+    if (s) s.classList.add('fade');
+    setTimeout(function() { if (s) s.remove(); }, 700);
+  }, 1600);
+});
 </script>
 </body>
 </html>"""
@@ -931,6 +982,42 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .hdr-spacer { flex: 1; }
   .hdr-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
   .hdr-user { display: flex; align-items: center; gap: 8px; }
+  .hdr-user-menu { position: relative; flex-shrink: 0; }
+  .hdr-user-btn { display: flex; align-items: center; justify-content: center; gap: 4px; width: 40px; height: 40px; background: none; border: 1px solid var(--glass-border); border-radius: 50%; cursor: pointer; color: var(--text2); transition: all 0.2s; }
+  .hdr-user-btn:hover { border-color: var(--blue); background: var(--hover-tint); color: var(--blue); }
+  .hdr-user-icon { display: flex; align-items: center; justify-content: center; position: relative; }
+  .hdr-user-icon .hdr-person { display: block; }
+  .hdr-user-icon .hdr-avatar { display: none; width: 34px; height: 34px; border-radius: 50%; object-fit: cover; }
+  .hdr-user-icon.has-photo .hdr-person { display: none; }
+  .hdr-user-icon.has-photo .hdr-avatar { display: block; }
+  .hdr-chevron { display: none; }
+  .hdr-user-dropdown {
+    position: absolute; right: 0; top: calc(100% + 8px); min-width: 220px; z-index: 300;
+    background: var(--sp-bg); border: 1px solid var(--glass-border); border-radius: 10px;
+    box-shadow: 0 8px 28px var(--card-shadow); padding: 6px; display: none;
+  }
+  .hdr-user-menu.open .hdr-user-dropdown { display: block; animation: fadeIn 0.15s ease; }
+  .hdr-user-dropdown-head { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px; font-size: 12px; color: var(--text3); }
+  .hdr-user-dropdown-head .hd-name { font-size: 14px; font-weight: 700; color: var(--text); }
+  .hdr-user-dropdown-head .hd-mail { font-size: 12px; color: var(--text3); margin-top: 2px; word-break: break-all; }
+  .hdr-user-dropdown-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 7px;
+    font-size: 13px; color: var(--text); cursor: pointer; transition: all 0.15s;
+  }
+  .hdr-user-dropdown-item:hover { background: var(--hover-tint); color: var(--blue); }
+  .hdr-user-dropdown-item.danger { color: var(--red); }
+  .hdr-user-dropdown-item.danger:hover { background: rgba(248,81,73,0.1); color: var(--red); }
+  .hdr-user-dropdown-sep { height: 1px; background: var(--border-subtle); margin: 6px 8px; }
+  .dd-chev { margin-left: auto; opacity: 0.5; transition: transform 0.2s; }
+  .dd-has-sub.open .dd-chev { transform: rotate(90deg); }
+  .hdr-user-dropdown-panel { display: none; padding: 6px 10px 8px; }
+  .hdr-user-dropdown-panel.open { display: block; animation: fadeIn 0.15s ease; }
+  .dd-clr-picker { border: none; background: var(--hover-tint); justify-content: space-between; }
+  .dm-option { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 7px; font-size: 13px; color: var(--text2); cursor: pointer; transition: all 0.15s; }
+  .dm-option:hover { background: var(--hover-tint); color: var(--text); }
+  .dm-option.active { color: var(--blue); background: rgba(88,166,255,0.1); }
+  .dm-check { visibility: hidden; font-size: 12px; }
+  .dm-option.active .dm-check { visibility: visible; }
   .hdr-avatar { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--glass-border); object-fit: cover; }
   .hdr-email { font-size: 12px; color: var(--text2); white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
   .clr-picker { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 8px; border: 1px solid var(--glass-border); background: var(--surface2); }
@@ -1213,13 +1300,6 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .toast-msg strong { color: var(--text); }
 
   /* ── Theme Toggle ────────────────────────────────── */
-  .theme-toggle { background: none; border: 1px solid var(--glass-border); color: var(--text2); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; flex-shrink: 0; }
-  .theme-toggle:hover { border-color: var(--blue); color: var(--blue); background: var(--hover-tint); }
-  .theme-toggle svg { width: 16px; height: 16px; }
-  .light .theme-icon-dark { display: none; }
-  .light .theme-icon-light { display: block; }
-  :root:not(.light) .theme-icon-dark { display: block; }
-  :root:not(.light) .theme-icon-light { display: none; }
 
   /* ── Metrics Tab ────────────────────────────────── */
   .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
@@ -1335,6 +1415,16 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .modal-btn.primary { background: var(--blue); color: #fff; }
   .modal-btn.primary:hover { box-shadow: 0 4px 12px rgba(88,166,255,0.3); }
   .modal-btn.secondary { background: rgba(48,54,61,0.6); color: var(--text2); }
+  .profile-row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border-subtle); }
+  .profile-row:last-of-type { border-bottom: none; }
+  .profile-label { font-size: 12px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
+  .profile-value { font-size: 14px; color: var(--text); word-break: break-all; text-align: right; }
+  .profile-avatar-wrap { position: relative; width: 84px; height: 84px; margin: 0 auto 16px; }
+  .profile-avatar { width: 84px; height: 84px; border-radius: 50%; background: var(--hover-tint); border: 2px dashed var(--border); display: flex; align-items: center; justify-content: center; color: var(--text3); overflow: hidden; }
+  .profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .profile-avatar-edit { position: absolute; right: -4px; bottom: -2px; width: 28px; height: 28px; border-radius: 50%; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: transform 0.15s; }
+  .profile-avatar-edit:hover { transform: scale(1.1); }
+  .profile-pic-remove { position: absolute; top: -4px; left: -4px; width: 24px; height: 24px; border-radius: 50%; background: var(--red); color: #fff; border: none; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; }
   .modal-btn.secondary:hover { background: rgba(48,54,61,0.9); color: var(--text); }
   .modal-msg { margin-top: 12px; padding: 10px 14px; font-size: 13px; border-radius: 8px; text-align: center; display: none; }
   .modal-msg.success { display: block; background: rgba(63,185,80,0.1); color: var(--green); border: 1px solid rgba(63,185,80,0.2); }
@@ -1377,23 +1467,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   </div>
   <div class="hdr-spacer"></div>
   <div class="hdr-right">
-    <div class="hdr-user" id="hdr-user" style="display:none">
-      <img class="hdr-avatar" id="hdr-avatar" src="" alt="">
-      <span class="hdr-email" id="hdr-email"></span>
-    </div>
     <span class="hdr-clock-toggle" id="hdr-clock-toggle" onclick="toggleTimezone()"><span id="hdr-clock"></span><span class="tz-label" id="hdr-tz">LOCAL</span></span>
-    <div class="clr-picker" id="clr-picker">
-      <button class="clr-dot active" data-clr="blue" style="background:#58a6ff" onclick="setColorTheme('blue')" title="Blue"></button>
-      <button class="clr-dot" data-clr="purple" style="background:#bc8cff" onclick="setColorTheme('purple')" title="Purple"></button>
-      <button class="clr-dot" data-clr="green" style="background:#3fb950" onclick="setColorTheme('green')" title="Green"></button>
-      <button class="clr-dot" data-clr="orange" style="background:#f0883e" onclick="setColorTheme('orange')" title="Orange"></button>
-      <button class="clr-dot" data-clr="red" style="background:#f85149" onclick="setColorTheme('red')" title="Red"></button>
-      <button class="clr-dot" data-clr="teal" style="background:#39d2c0" onclick="setColorTheme('teal')" title="Teal"></button>
-    </div>
-    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
-      <svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-    </button>
     <nav class="hdr-tabs">
       <button class="tab-btn active" data-tab="overview">Overview</button>
       <button class="tab-btn" data-tab="pods" id="pods-tab">Pods <span class="tab-badge" id="pod-count" style="display:none">0</span></button>
@@ -1402,11 +1476,63 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       <button class="tab-btn" data-tab="llm">LLM</button>
 <button class="tab-btn" data-tab="metrics">Metrics</button>
 <button class="tab-btn" data-tab="approvals" id="approvals-tab">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
-<button class="tab-btn" data-tab="users" id="users-tab" style="display:none">Users</button>
-      <button class="tab-btn" data-tab="reports">Reports</button>
-      <button class="tab-btn" onclick="openChangePwModal()" style="color:var(--text2)">Change Password</button>
-      <button class="tab-btn" onclick="logout()" style="color:var(--red);margin-left:8px">Logout</button>
+<button class="tab-btn" data-tab="reports">Reports</button>
     </nav>
+    <div class="hdr-user-menu" id="hdr-user-menu">
+      <button class="hdr-user-btn" onclick="toggleUserMenu(event)" title="Account">
+        <span class="hdr-user-icon">
+          <img class="hdr-avatar" id="hdr-avatar" src="" alt="">
+          <svg class="hdr-person" id="hdr-person" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </span>
+        <svg class="hdr-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="hdr-user-dropdown" id="hdr-user-dropdown">
+        <div class="hdr-user-dropdown-head" id="hdr-user-dropdown-head"></div>
+        <div class="hdr-user-dropdown-item" onclick="openProfile();closeUserMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Profile
+        </div>
+        <div class="hdr-user-dropdown-item" id="menu-users-item" onclick="switchTab('users');closeUserMenu()" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Users
+        </div>
+        <div class="hdr-user-dropdown-item" onclick="openChangePwModal();closeUserMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Change Password
+        </div>
+        <div class="hdr-user-dropdown-sep"></div>
+        <div class="hdr-user-dropdown-item dd-has-sub" onclick="toggleDropdownPanel('theme-color-panel', this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+          Theme Color
+          <svg class="dd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="hdr-user-dropdown-panel" id="theme-color-panel">
+          <div class="clr-picker dd-clr-picker" id="clr-picker">
+            <button class="clr-dot active" data-clr="blue" style="background:#58a6ff" onclick="setColorTheme('blue')" title="Blue"></button>
+            <button class="clr-dot" data-clr="purple" style="background:#bc8cff" onclick="setColorTheme('purple')" title="Purple"></button>
+            <button class="clr-dot" data-clr="green" style="background:#3fb950" onclick="setColorTheme('green')" title="Green"></button>
+            <button class="clr-dot" data-clr="orange" style="background:#f0883e" onclick="setColorTheme('orange')" title="Orange"></button>
+            <button class="clr-dot" data-clr="red" style="background:#f85149" onclick="setColorTheme('red')" title="Red"></button>
+            <button class="clr-dot" data-clr="teal" style="background:#39d2c0" onclick="setColorTheme('teal')" title="Teal"></button>
+          </div>
+        </div>
+        <div class="hdr-user-dropdown-item dd-has-sub" onclick="toggleDropdownPanel('display-mode-panel', this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="1" y="3" width="18" height="14" rx="2" ry="2"/><line x1="6" y1="21" x2="14" y2="21"/><line x1="10" y1="17" x2="10" y2="21"/><path d="M19 11a3 3 0 0 0 0-6M21 12a5 5 0 0 0-2-9.5"/></svg>
+          Display Mode
+          <svg class="dd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="hdr-user-dropdown-panel" id="display-mode-panel">
+          <div class="dm-option" data-mode="light" onclick="setDisplayMode('light', event)"><span class="dm-check">✓</span>Light</div>
+          <div class="dm-option" data-mode="dark" onclick="setDisplayMode('dark', event)"><span class="dm-check">✓</span>Dark</div>
+          <div class="dm-option" data-mode="auto" onclick="setDisplayMode('auto', event)"><span class="dm-check">✓</span>Auto</div>
+        </div>
+        <div class="hdr-user-dropdown-sep"></div>
+        <div class="hdr-user-dropdown-item danger" onclick="logout()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Sign out
+        </div>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -1805,14 +1931,39 @@ function toggleTimezone() {
     }
   }
 }
-function toggleTheme() {
-  document.documentElement.classList.toggle('light');
-  var isLight = document.documentElement.classList.contains('light');
-  localStorage.setItem('dashboard_theme', isLight ? 'light' : 'dark');
-  document.getElementById('metaThemeColor').content = isLight ? '#ffffff' : '#0a0e17';
+var _displayMode = localStorage.getItem('dashboard_display_mode') || 'auto';
+
+function _syncDisplayMenu() {
+  document.querySelectorAll('.dm-option').forEach(function(el){
+    el.classList.toggle('active', el.dataset.mode === _displayMode);
+  });
+}
+function _applyDisplayMode() {
+  var light = false;
+  if (_displayMode === 'light') light = true;
+  else if (_displayMode === 'auto') light = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+  document.documentElement.classList.toggle('light', light);
+  var mt = document.getElementById('metaThemeColor');
+  if (mt) mt.content = light ? '#ffffff' : '#0a0e17';
   var sc = localStorage.getItem('dashboard_color');
   if (sc) setColorTheme(sc);
+  _syncDisplayMenu();
   if (_selectedTab === 'metrics' && _lastMetricsData) { destroyAllMetricCharts(); buildAllMetricCharts(_lastMetricsData, _lastDiagsData); }
+}
+function setDisplayMode(mode, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  _displayMode = mode;
+  localStorage.setItem('dashboard_display_mode', mode);
+  _applyDisplayMode();
+}
+function toggleDropdownPanel(id, item) {
+  document.querySelectorAll('.hdr-user-dropdown-panel').forEach(function(p){p.classList.remove('open');});
+  document.querySelectorAll('.dd-has-sub').forEach(function(i){i.classList.remove('open');});
+  var panel = document.getElementById(id);
+  if (panel && !panel.classList.contains('open')) {
+    panel.classList.add('open');
+    if (item) item.classList.add('open');
+  }
 }
 var _colorThemes = {
   blue:   {blue:'#58a6ff', dark:'#58a6ff', light:'#0969da'},
@@ -1833,7 +1984,7 @@ function setColorTheme(name) {
 }
 var _savedColor = localStorage.getItem('dashboard_color');
 if (_savedColor && _colorThemes[_savedColor]) setColorTheme(_savedColor);
-document.documentElement.classList.remove('light');
+_applyDisplayMode();
 if (typeof Chart !== 'undefined') { var _tc = getChartColors(); Chart.defaults.color = _tc.text; Chart.defaults.borderColor = _tc.border; Chart.defaults.devicePixelRatio = window.devicePixelRatio || 1; if (Chart.register) { try { Chart.register(ChartZoom); } catch(e){} try { Chart.register(ChartAnnotation); } catch(e){} } }
 setInterval(updateClock, 1000);
 updateClock();
@@ -2825,6 +2976,19 @@ function logout() {
     window.location.href = '/login';
   });
 }
+function toggleUserMenu(e) {
+  e.stopPropagation();
+  document.getElementById('hdr-user-menu').classList.toggle('open');
+}
+function closeUserMenu() {
+  document.getElementById('hdr-user-menu').classList.remove('open');
+}
+document.addEventListener('click', function(e) {
+  var m = document.getElementById('hdr-user-menu');
+  if (m && m.classList.contains('open') && !m.contains(e.target)) {
+    m.classList.remove('open');
+  }
+});
 function checkUserPermissions(cb) {
   fetch('/users/me').then(function(r){
     if (r.status === 200) return r.json();
@@ -2832,7 +2996,7 @@ function checkUserPermissions(cb) {
   }).then(function(d){
     if (d && d.perms) {
       var p = d.perms;
-      var ut = document.getElementById('users-tab');
+      var ut = document.getElementById('menu-users-item');
       if (ut) ut.style.display = p.can_admin ? '' : 'none';
       var at = document.getElementById('approvals-tab');
       if (at) {
@@ -2861,11 +3025,21 @@ function checkUserPermissions(cb) {
     }
     if (d && d.google_user) {
       var g = d.google_user;
-      var el = document.getElementById('hdr-user');
-      document.getElementById('hdr-avatar').src = g.picture || '';
-      document.getElementById('hdr-email').textContent = g.email || '';
-      el.style.display = 'flex';
+      var av = document.getElementById('hdr-avatar');
+      if (g.picture) av.src = g.picture; else av.removeAttribute('src');
+      var icon = document.querySelector('#hdr-user-menu .hdr-user-icon');
+      if (icon) icon.classList.toggle('has-photo', !!g.picture);
+      var head = document.getElementById('hdr-user-dropdown-head');
+      head.innerHTML = '<div class="hd-name">' + (g.name || g.email || 'User') + '</div><div class="hd-mail">' + (g.email || '') + '</div>';
+    } else if (d && d.username) {
+      var icon = document.querySelector('#hdr-user-menu .hdr-user-icon');
+      if (icon) icon.classList.toggle('has-photo', !!d.profile_pic);
+      var av = document.getElementById('hdr-avatar');
+      if (d.profile_pic) av.src = d.profile_pic; else av.removeAttribute('src');
+      var head = document.getElementById('hdr-user-dropdown-head');
+      head.innerHTML = '<div class="hd-name">' + d.username + '</div><div class="hd-mail">' + (d.email || '') + '</div>';
     }
+    document.getElementById('hdr-user-menu').style.display = 'block';
     if (cb) cb();
   }).catch(function(){if (cb) cb();});
 }
@@ -2884,6 +3058,98 @@ function openChangePwModal() {
 function closeChangePwModal() {
   document.getElementById('pw-modal').classList.remove('active');
 }
+function closeProfile() {
+  document.getElementById('profile-modal').classList.remove('active');
+}
+function _setProfilePreview(pic) {
+  var img = document.getElementById('profile-avatar-img');
+  var svg = document.getElementById('profile-avatar-preview').querySelector('svg');
+  var rm = document.getElementById('profile-pic-remove');
+  if (pic) {
+    img.src = pic;
+    img.style.display = '';
+    svg.style.display = 'none';
+    rm.style.display = '';
+  } else {
+    img.style.display = 'none';
+    img.removeAttribute('src');
+    svg.style.display = '';
+    rm.style.display = 'none';
+  }
+}
+function openProfile() {
+  fetch('/users/me').then(function(r){return r.json();}).then(function(d){
+    if (!d) return;
+    document.getElementById('profile-username-input').value = d.username || '';
+    document.getElementById('profile-email').textContent = (d.google_user && d.google_user.email) ? d.google_user.email : (d.email || '—');
+    var role = d.role || '';
+    if (d.google_user) role = 'Google SSO' + (role ? ' · ' + role : '');
+    if (!role && d.perms && d.perms.can_admin) role = 'Admin';
+    if (!role) role = 'User';
+    document.getElementById('profile-role').textContent = role;
+    _setProfilePreview(d.profile_pic || '');
+    var msg = document.getElementById('profile-msg');
+    msg.style.display = 'none';
+    msg.className = 'modal-msg';
+    document.getElementById('profile-modal').classList.add('active');
+  }).catch(function(){
+    document.getElementById('profile-modal').classList.add('active');
+  });
+}
+function removeProfilePic() {
+  _setProfilePreview('');
+}
+function saveProfile() {
+  var username = document.getElementById('profile-username-input').value.trim();
+  var pic = document.getElementById('profile-avatar-img').src || '';
+  var msg = document.getElementById('profile-msg');
+  msg.style.display = 'none';
+  msg.className = 'modal-msg';
+  if (username.length < 3 || username.length > 32) {
+    msg.textContent = 'Username must be 3-32 characters';
+    msg.style.display = 'block';
+    msg.className = 'modal-msg error';
+    return;
+  }
+  var payload = {username: username, profile_pic: pic};
+  fetch('/users/profile', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){return r.json();}).then(function(j){
+    if (j.ok) {
+      msg.textContent = 'Profile updated';
+      msg.style.display = 'block';
+      msg.className = 'modal-msg success';
+      setTimeout(function(){ closeProfile(); }, 900);
+      checkUserPermissions();
+    } else {
+      msg.textContent = j.error || 'Update failed';
+      msg.style.display = 'block';
+      msg.className = 'modal-msg error';
+    }
+  }).catch(function(){
+    msg.textContent = 'Update failed';
+    msg.style.display = 'block';
+    msg.className = 'modal-msg error';
+  });
+}
+function _profilePicChosen(e) {
+  var f = e.target.files && e.target.files[0];
+  if (!f) return;
+  if (f.size > 400000) { alert('Image too large. Max 400KB.'); return; }
+  var rd = new FileReader();
+  rd.onload = function(ev) { _setProfilePreview(ev.target.result); };
+  rd.readAsDataURL(f);
+}
+function _bindProfilePicInput() {
+  var el = document.getElementById('profile-pic-input');
+  if (el && !el.dataset.bound) {
+    el.dataset.bound = '1';
+    el.addEventListener('change', _profilePicChosen);
+  }
+}
+window.addEventListener('load', _bindProfilePicInput);
 function submitChangePw() {
   var old = document.getElementById('pw-old').value;
   var pw = document.getElementById('pw-new').value;
@@ -2971,6 +3237,41 @@ setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
     <div class="modal-actions">
       <button class="modal-btn secondary" onclick="closeChangePwModal()">Cancel</button>
       <button class="modal-btn primary" onclick="submitChangePw()">Change Password</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="profile-modal">
+  <div class="modal-card profile-card">
+    <h2>Profile</h2>
+    <p>Edit your Healix account details.</p>
+    <div class="profile-avatar-wrap">
+      <div class="profile-avatar" id="profile-avatar-preview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="42" height="42"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <img id="profile-avatar-img" src="" alt="" style="display:none">
+      </div>
+      <label class="profile-avatar-edit" for="profile-pic-input" title="Upload photo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </label>
+      <input type="file" id="profile-pic-input" accept="image/*" style="display:none">
+      <button class="profile-pic-remove" id="profile-pic-remove" onclick="removeProfilePic()" style="display:none" title="Remove photo">✕</button>
+    </div>
+    <div class="modal-field">
+      <label for="profile-username-input">Username</label>
+      <input type="text" id="profile-username-input" autocomplete="username">
+    </div>
+    <div class="profile-row">
+      <span class="profile-label">Email</span>
+      <span class="profile-value" id="profile-email">—</span>
+    </div>
+    <div class="profile-row">
+      <span class="profile-label">Role</span>
+      <span class="profile-value" id="profile-role">—</span>
+    </div>
+    <div class="modal-msg" id="profile-msg"></div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeProfile()">Cancel</button>
+      <button class="modal-btn primary" onclick="saveProfile()">Save</button>
     </div>
   </div>
 </div>
@@ -3577,8 +3878,11 @@ class _HealthHandler(BaseHTTPRequestHandler):
             if session:
                 self._respond(200, {
                     "username": session["username"],
+                    "email": session.get("email"),
+                    "role": session.get("role"),
                     "perms": session["perms"],
                     "google_user": session.get("google_user"),
+                    "profile_pic": session.get("profile_pic"),
                 })
             else:
                 self._respond(401, {"error": "unauthorized"})
@@ -3773,6 +4077,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
                     "can_admin": user.get("can_admin", False),
                 }
                 token = _generate_session_token(username, perms)
+                _sessions[token]["email"] = user.get("email")
+                _sessions[token]["profile_pic"] = user.get("profile_pic")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Strict")
@@ -3821,6 +4127,37 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 self._respond(401, {"error": "Old password is incorrect"})
                 return
             _storage.update_password(user["id"], new_pw)
+            self._respond(200, {"ok": True})
+
+        elif self.path == "/users/profile":
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session:
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+            data = self._read_body()
+            username = (data.get("username") or "").strip() or None
+            profile_pic = data.get("profile_pic")
+            if isinstance(profile_pic, str) and not profile_pic:
+                profile_pic = ""
+            if username is not None and (len(username) < 3 or len(username) > 32):
+                self._respond(400, {"error": "Username must be 3-32 characters"})
+                return
+            if profile_pic is not None and len(profile_pic) > 500000:
+                self._respond(400, {"error": "Profile image too large"})
+                return
+            user = _storage.get_user_by_username(session["username"])
+            if not user:
+                self._respond(401, {"error": "unauthorized"})
+                return
+            ok = _storage.update_user_profile(user["id"], username=username, profile_pic=profile_pic)
+            if not ok:
+                self._respond(400, {"error": "Username already taken"})
+                return
+            _update_session_user(cookie, session, username=username, profile_pic=profile_pic)
             self._respond(200, {"ok": True})
 
         elif self.path == "/forgot":
