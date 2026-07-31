@@ -1,4 +1,4 @@
-# K8s AI Healing Agent — v9 (Modular Multi-Provider Edition)
+# Healix — K8s & Docker AI Auto-Healer (Modular Multi-Provider Edition)
 
 A self-healing agent that monitors Kubernetes pods and Docker containers, diagnoses issues using a configurable chain of 6 LLM providers, and automatically applies fixes with rollback safety, PDB awareness, and cost estimation.
 
@@ -89,10 +89,12 @@ docker compose up -d --build
 docker compose logs -f ai-healer
 
 # 4. Check health
-curl http://localhost:8080/health
+curl http://localhost:9990/health
 
-# 5. Check metrics
-curl http://localhost:8080/metrics
+# 5. Open the dashboard (login required)
+#    - http://localhost:9990/metrics  → visual HTML dashboard
+#    - http://localhost:9990/metrics/raw → Prometheus text format
+curl http://localhost:9990/metrics/raw
 ```
 
 ### Minimal `.env` (required)
@@ -112,8 +114,8 @@ REPORT_ONLY=true
 
 | File | Purpose | Lines |
 |---|---|---|
-| `agent.py` | Main orchestrator — wires all modules, runs monitor loop | ~800 |
-| `config.py` | All environment variables loaded and validated | ~170 |
+| `agent.py` | Main orchestrator — wires all modules, runs monitor loop | ~915 |
+| `config.py` | All environment variables loaded and validated | ~200 |
 | `providers.py` | LLM provider registry, callers, chain logic | ~150 |
 | `prompts.py` | System prompt, few-shot examples, prompt builder | ~180 |
 | `k8s_engine.py` | K8s client, pod health, deployment helpers, actions, event watcher | ~350 |
@@ -123,23 +125,23 @@ REPORT_ONLY=true
 | `rollback.py` | Post-heal verification and automatic rollback | ~100 |
 | `cost.py` | Cost estimation for restarts, memory changes, downtime | ~80 |
 | `notifications.py` | Email senders (dev, resolution, infra, rollback, approval) + n8n | ~430 |
-| `observability.py` | Health server, metrics, diagnosis store, dashboard UI, approvals tab | ~2000 |
+| `observability.py` | Health server, metrics, diagnosis store, auth/SSO, profiles, dashboard UI, approvals tab, PDF reports | ~4400 |
 | `prometheus.py` | Fetches CPU/memory metrics from Prometheus for LLM context | ~178 |
 | `k8s_events.py` | Fetches Kubernetes Warning events for diagnosis context | ~167 |
 | `approval.py` | Approval store, request/response, executor thread for human-in-the-loop | ~330 |
 | `email_reader.py` | IMAP polling, reply parsing for approve/reject via email | ~180 |
-| `storage.py` | PostgreSQL backend — circuit breaker, diagnoses, approvals, audit log | ~250 |
+| `storage.py` | PostgreSQL backend — users, circuit breaker, diagnoses, approvals, audit log | ~610 |
 | `circuit_breaker.py` | Circuit breaker state machine | ~120 |
 | `watchdog.sh` | Sidecar — monitors agent, auto-restarts on crash | ~140 |
 | `Dockerfile` | Builds agent container (Python 3.12, non-root, healthcheck) | ~35 |
 | `docker-compose.yml` | Runs agent with host networking, Docker socket, kubeconfig | ~56 |
 | `.env` | All configuration | ~120 |
-| `requirements.txt` | Python dependencies | ~9 |
+| `requirements.txt` | Python dependencies | ~10 |
 | `README.md` | This file | — |
 
 ---
 
-## v9 New Features
+## Healix Features
 
 ### 1. Auto-Remediation Rollback (`rollback.py`)
 
@@ -268,11 +270,47 @@ Instead of destroying and rebuilding the UI on every 5s poll, the dashboard now 
 
 The `smartUpdate()` function compares existing DOM children with incoming data, creating a minimal diff set (add, update, remove) — ensuring smooth transitions across approval cards, activity feed, timeline, and diagnosis card grids.
 
+### 10. Authentication & Google SSO
+
+The dashboard is protected by a session cookie (`SameSite=Strict`) and supports two login paths:
+
+- **Password login** — `POST /login` with `DASHBOARD_USER` / `DASHBOARD_PASSWORD` credentials.
+- **Google Sign-In** — `GET /auth/google` → OAuth 2.0 flow → `GET /auth/google/callback`:
+  - OAuth `state` token with CSRF protection
+  - Identity verified server-side via Google `tokeninfo` (audience, issuer, `email_verified`)
+  - Domain allow-list check via `GOOGLE_ALLOWED_DOMAINS` (default `thewitslab.com,marblex.ai`)
+  - First-time Google users are auto-provisioned into the Postgres `users` table
+
+> **Note:** If Google rejects sign-in with `Error 403: org_internal`, the Google OAuth app's User Type is set to **Internal**. Switch it to **External** in Google Cloud Console (OAuth consent screen) so accounts outside your org's domain can sign in.
+
+Config: `DASHBOARD_USER`, `DASHBOARD_PASSWORD`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS`, `GOOGLE_REDIRECT_URI`
+
+### 11. User Profiles
+
+- Account dropdown in the header (theme color + display mode)
+- Profile editing with photo upload — `POST /users/profile`
+- Server-side validation: username must match `^[A-Za-z0-9._@\-]{3,32}$`; photo must be empty or a `data:image/(png|jpe?g|gif|webp);base64,...` URL
+- All usernames are HTML-escaped in the dashboard header and the admin Users table to prevent stored XSS
+
+### 12. Premium PDF Reports
+
+The Reports tab generates a branded, gradient-styled PDF summary:
+
+```
+GET /api/report?days=N   (1 ≤ N ≤ 30)  →  healix-report-Nd-YYYYMMDD.pdf
+```
+
+Includes KPI cards, per-day trend bar chart, platform/route breakdowns, top-resource list, and incident table with status pills. Requires authentication; generated with `fpdf2`.
+
+### 13. Boot Splash
+
+On every dashboard load the Healix logo cracks apart and snaps back together (jagged crack lines, join glow, "Initialising Healix…" status, then "Welcome, <user>"), before the overlay fades out.
+
 ---
 
-## Code Quality (v9 vs v8)
+## Code Quality
 
-| Aspect | v8 | v9 |
+| Aspect | Legacy | Healix |
 |---|---|---|
 | File structure | 1 monolithic `agent.py` (1420 lines) | 14 focused modules (~100-350 lines each) |
 | Type hints | None | All function signatures |
@@ -394,28 +432,28 @@ DIAGNOSIS_PROVIDER_CHAIN=groq,gemini    # Try only Groq then Gemini
 | `CIRCUIT_BREAKER_WINDOW_MIN` | `60` | Rolling window in minutes |
 | `CIRCUIT_BREAKER_COOLDOWN_MIN` | `1440` | Cooldown in minutes (24h) |
 
-### Rollback (v9)
+### Rollback
 
 | Variable | Default | Description |
 |---|---|---|
 | `HEAL_VERIFY_ENABLED` | `true` | Enable post-heal verification |
 | `HEAL_VERIFY_DELAY_SEC` | `60` | Seconds to wait before checking |
 
-### Event-Driven (v9)
+### Event-Driven
 
 | Variable | Default | Description |
 |---|---|---|
 | `WATCH_EVENTS_ENABLED` | `true` | Enable K8s event watcher thread |
 | `WATCH_EVENTS_DEBOUNCE_SEC` | `300` | Min seconds between re-triggers per pod |
 
-### Observability (v9)
+### Observability
 
 | Variable | Default | Description |
 |---|---|---|
-| `HEALTH_PORT` | `8080` | HTTP health/metrics port |
-| `METRICS_ENABLED` | `true` | Enable health server + Prometheus metrics |
+| `HEALTH_PORT` | `8080` | HTTP health/metrics port (running config uses `9990`) |
+| `METRICS_ENABLED` | `true` | Enable health server + dashboard |
 
-### Cost Estimation (v9)
+### Cost Estimation
 
 | Variable | Default | Description |
 |---|---|---|
@@ -441,9 +479,28 @@ DIAGNOSIS_PROVIDER_CHAIN=groq,gemini    # Try only Groq then Gemini
 | `IMAP_PASSWORD` | — | IMAP password or app password |
 | `IMAP_POLL_INTERVAL` | `30` | Seconds between inbox polls |
 
+### Authentication & SSO
+
+| Variable | Default | Description |
+|---|---|---|
+| `DASHBOARD_USER` | `admin` | Admin username for password login |
+| `DASHBOARD_PASSWORD` | `admin` | Admin password for password login |
+| `GOOGLE_CLIENT_ID` | — | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
+| `GOOGLE_ALLOWED_DOMAINS` | `thewitslab.com,marblex.ai` | Comma-separated email domains allowed to sign in |
+| `GOOGLE_REDIRECT_URI` | derived from Host | OAuth redirect URI (leave empty to auto-derive) |
+
+### Diagnosis History
+
+| Variable | Default | Description |
+|---|---|---|
+| `DIAGNOSIS_HISTORY_SIZE` | `200` | Max in-memory diagnoses kept for the dashboard |
+
 ---
 
 ## Observability Endpoints
+
+> The dashboard (`/metrics`, `/diagnoses`, `/approvals`, `/api/*`) requires login. Prometheus-style text is served from `/metrics/raw`.
 
 ### `GET /health`
 
@@ -454,6 +511,10 @@ Returns agent liveness status.
 ```
 
 ### `GET /metrics`
+
+The **visual HTML dashboard** (login required). Serves the Healix dashboard with diagnosis cards, charts, approvals, and reports tabs.
+
+### `GET /metrics/raw`
 
 Prometheus-format metrics for the agent itself:
 
@@ -467,6 +528,34 @@ healer_llm_latency_seconds{provider="groq",quantile="avg"} 2.3
 healer_rollbacks_total 2
 healer_pdb_blocks_total 1
 ```
+
+### `GET /metrics/api`
+
+Metrics as JSON, consumed by the dashboard JS.
+
+### `GET /diagnoses`
+
+Returns the in-memory diagnosis history (capped by `DIAGNOSIS_HISTORY_SIZE`, default 200).
+
+### `GET /api/report?days=N`
+
+Generates a premium PDF report for the last `N` days (1–30). Returns `healix-report-Nd-YYYYMMDD.pdf`.
+
+### `GET /login` / `POST /login` / `GET /logout`
+
+Password login page, login POST (form: `username`, `password`), and logout.
+
+### `GET /auth/google` / `GET /auth/google/callback`
+
+Google OAuth 2.0 sign-in flow.
+
+### `GET /users/me` / `POST /users/profile`
+
+Current user info (includes `profile_pic`) and profile updates (username, photo data URL).
+
+### `POST /users/create` / `POST /users/update` / `POST /users/delete`
+
+Admin user management from the dashboard Users tab.
 
 ### `GET /approvals`
 
@@ -526,6 +615,8 @@ requests               # HTTP (Loki, Prometheus, Ollama, n8n, cloud LLMs)
 rich                   # CLI output formatting
 docker                 # Docker SDK (optional, for Docker monitoring)
 psycopg2-binary        # PostgreSQL adapter (optional, for persistence)
+bcrypt                 # Password hashing (dashboard auth)
+fpdf2                  # Premium PDF report generation
 ```
 
 ---
