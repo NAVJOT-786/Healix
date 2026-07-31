@@ -496,6 +496,17 @@ def _refresh_user_sessions(user_id: int) -> None:
 #  LOGIN PAGE HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
+_GOOGLE_SSO_BLOCK = """  <div class="login-divider"><span>or continue with</span></div>
+  <a href="/auth/google" class="google-btn">
+    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+    Sign in with Google
+  </a>"""
+
+
+def _render_login_html() -> str:
+    sso_enabled = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+    return _LOGIN_HTML.replace("__GOOGLE_SSO__", _GOOGLE_SSO_BLOCK if sso_enabled else "")
+
 _LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -608,6 +619,7 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
 <div class="login-grid"></div>
 <div class="login-card">
   <div class="login-brand">
+    <a href="/" style="text-decoration:none;color:inherit">
     <div class="logo-wrap">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
@@ -617,6 +629,7 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
     </div>
     <h1>Healix</h1>
     <p>AI-Powered Self-Healing Platform</p>
+    </a>
   </div>
   <form id="loginForm" onsubmit="return doLogin(event)">
     <div class="login-field">
@@ -639,11 +652,7 @@ _LOGIN_HTML = r"""<!DOCTYPE html>
       <a href="/forgot">Forgot password?</a>
     </div>
   </form>
-  <div class="login-divider"><span>or continue with</span></div>
-  <a href="/auth/google" class="google-btn">
-    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-    Sign in with Google
-  </a>
+  __GOOGLE_SSO__
 </div>
 <script>
 function doLogin(e) {
@@ -3098,7 +3107,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 self._respond(503, {"status": "unhealthy", "last_heartbeat_age_sec": round(age, 1)})
 
         elif self.path == "/login" or self.path == "/":
-            self._respond_html(200, _LOGIN_HTML)
+            self._respond_html(200, _render_login_html())
 
         elif self.path == "/auth/google":
             if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -3107,6 +3116,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             redirect_uri = GOOGLE_REDIRECT_URI or (
                 "http://" + self.headers.get("Host", "localhost:" + str(HEALTH_PORT)) + "/auth/google/callback"
             )
+            oauth_state = secrets.token_urlsafe(16)
             params = urllib.parse.urlencode({
                 "client_id": GOOGLE_CLIENT_ID,
                 "redirect_uri": redirect_uri,
@@ -3114,9 +3124,11 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 "scope": "openid email profile",
                 "access_type": "online",
                 "prompt": "select_account",
+                "state": oauth_state,
             })
             self.send_response(302)
             self.send_header("Location", "https://accounts.google.com/o/oauth2/v2/auth?" + params)
+            self.send_header("Set-Cookie", f"oauth_state={oauth_state}; Path=/; HttpOnly; SameSite=Lax")
             self.end_headers()
 
         elif self.path.startswith("/auth/google/callback"):
@@ -3127,6 +3139,15 @@ class _HealthHandler(BaseHTTPRequestHandler):
             params = urllib.parse.parse_qs(qs)
             code = params.get("code", [None])[0]
             error = params.get("error", [None])[0]
+            state = params.get("state", [None])[0]
+            cookie_state = ""
+            for part in self.headers.get("Cookie", "").split(";"):
+                kv = part.strip().split("=", 1)
+                if len(kv) == 2 and kv[0] == "oauth_state":
+                    cookie_state = kv[1]
+            if not state or not cookie_state or state != cookie_state:
+                self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Sign-In Failed</h2><p style='color:#8b949e'>Invalid OAuth state. Please try again.</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                return
             if error or not code:
                 self._respond_html(200, f"<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Google Sign-In Failed</h2><p style='color:#8b949e'>{error or 'No authorization code received'}</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
                 return
@@ -3146,27 +3167,42 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 if not id_token:
                     self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Failed</h2><p style='color:#8b949e'>Could not verify identity</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
                     return
-                payload_b64 = id_token.split(".")[1]
-                pad = 4 - len(payload_b64) % 4
-                if pad != 4:
-                    payload_b64 += "=" * pad
-                import base64
-                decoded = json.loads(base64.urlsafe_b64decode(payload_b64))
-                email = decoded.get("email", "")
-                name = decoded.get("name", email.split("@")[0])
-                picture = decoded.get("picture", "")
+                # ── Server-side verification of the id_token ──
+                info_resp = requests.get(
+                    "https://oauth2.googleapis.com/tokeninfo",
+                    params={"id_token": id_token}, timeout=10,
+                )
+                info = info_resp.json()
+                if info_resp.status_code != 200 or not info.get("email"):
+                    self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Failed</h2><p style='color:#8b949e'>Could not verify identity</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    return
+                if info.get("aud") != GOOGLE_CLIENT_ID:
+                    log.error("Google SSO: audience mismatch (aud=%s)", info.get("aud"))
+                    self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Failed</h2><p style='color:#8b949e'>Token validation failed</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    return
+                if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+                    log.error("Google SSO: unexpected issuer (iss=%s)", info.get("iss"))
+                    self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Failed</h2><p style='color:#8b949e'>Token validation failed</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    return
+                if str(info.get("email_verified", "")).lower() not in ("true", "1"):
+                    log.error("Google SSO: unverified email (%s)", info.get("email"))
+                    self._respond_html(200, "<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Authentication Failed</h2><p style='color:#8b949e'>Email is not verified</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    return
+                email = info.get("email", "")
+                name = info.get("name", email.split("@")[0])
+                picture = info.get("picture", "")
                 email_domain = email.split("@")[-1] if "@" in email else ""
                 allowed_domains = [d.strip() for d in GOOGLE_ALLOWED_DOMAINS.split(",") if d.strip()]
                 if email_domain not in allowed_domains:
-                    self._respond_html(200, f"<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Access Denied</h2><p style='color:#8b949e'>Only @thewitslab.com and @marblex.ai email addresses are allowed.</p><p style='color:#8b949e;font-size:13px'>Your email: {email}</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
+                    allowed_display = ", ".join(f"@{d}" for d in allowed_domains) or "configured domains"
+                    self._respond_html(200, f"<html><body style='font-family:sans-serif;background:#0a0e17;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh'><div style='text-align:center'><h2>Access Denied</h2><p style='color:#8b949e'>Only {allowed_display} email addresses are allowed.</p><p style='color:#8b949e;font-size:13px'>Your email: {email}</p><a href='/login' style='color:#58a6ff'>Back to Login</a></div></body></html>")
                     return
                 username = email.split("@")[0] + "@" + email_domain
                 user = None
                 if _storage:
                     user = _storage.get_user_by_email(email)
                     if not user:
-                        import secrets as _secrets
-                        rand_password = _secrets.token_urlsafe(12)
+                        rand_password = secrets.token_urlsafe(12)
                         user = _storage.create_user(
                             username=username, email=email, password=rand_password,
                             can_view_dashboard=True, can_view_pods=True,
@@ -3189,6 +3225,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                         }
                         self.send_response(302)
                         self.send_header("Location", "/metrics")
+                        self.send_header("Set-Cookie", f"oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
                         self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Lax")
                         self.end_headers()
                         return
@@ -3243,7 +3280,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             cookie = self.headers.get("Cookie", "")
             session = _validate_session(cookie)
             if not session:
-                self._respond_html(200, _LOGIN_HTML)
+                self._respond_html(200, _render_login_html())
                 return
             body = _DASHBOARD_HTML.replace("__CONFIG__", json.dumps(_dashboard_config)).encode()
             self.send_response(200)
@@ -3416,7 +3453,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 token = _generate_session_token(username, perms)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Lax")
+                self.send_header("Set-Cookie", f"session_id={token}; Path=/; HttpOnly; SameSite=Strict")
                 body = json.dumps({"ok": True}).encode()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -3432,7 +3469,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
                     if len(kv) == 2 and kv[0] == "session_id":
                         _sessions.pop(kv[1], None)
             self.send_response(200)
-            self.send_header("Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+            self.send_header("Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             body = json.dumps({"ok": True}).encode()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -3510,8 +3547,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             if not username or not email:
                 self._respond(400, {"error": "Username and email required"})
                 return
-            import secrets as _secrets
-            rand_password = _secrets.token_urlsafe(12)
+            rand_password = secrets.token_urlsafe(12)
             user = _storage.create_user(
                 username=username, email=email, password=rand_password,
                 can_view_dashboard=perms.get("can_view_dashboard", True),
