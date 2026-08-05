@@ -23,7 +23,7 @@ import threading
 import urllib.parse
 import calendar
 from dataclasses import dataclass, asdict
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Any
 
 import requests
@@ -3534,6 +3534,23 @@ setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
   }
   .chat-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(88,166,255,0.18); }
   .chat-fab svg { width: 26px; height: 26px; color: var(--blue); }
+  .chat-fab-label {
+    position: fixed; right: 92px; bottom: 38px; z-index: 1001;
+    max-width: 250px; padding: 10px 14px;
+    background: var(--surface); border: 1px solid var(--border-glow); border-radius: 12px;
+    box-shadow: 0 8px 28px var(--card-shadow); backdrop-filter: blur(10px);
+    font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.45;
+    opacity: 0; transform: translateX(8px); transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .chat-fab-label.show { opacity: 1; transform: translateX(0); }
+  .chat-fab-label.hidden { opacity: 0; pointer-events: none; }
+  .chat-fab-label::before {
+    content: ''; position: absolute; right: -6px; top: 50%; transform: translateY(-50%) rotate(45deg);
+    width: 12px; height: 12px; background: var(--surface); border-right: 1px solid var(--border-glow);
+    border-top: 1px solid var(--border-glow);
+  }
+  .chat-fab-label .chat-caret { display: inline-block; width: 2px; height: 14px; background: var(--blue); margin-left: 2px; vertical-align: -2px; animation: chatCaretBlink 0.85s step-end infinite; }
+  @keyframes chatCaretBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
   .chat-panel {
     position: fixed; right: 22px; bottom: 90px; z-index: 1001;
     width: 368px; max-width: calc(100vw - 32px); height: 480px; max-height: calc(100vh - 140px);
@@ -3578,8 +3595,9 @@ setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
   .chat-foot button:disabled { opacity: 0.55; cursor: default; }
 </style>
 <div class="chat-fab" id="chatFab" onclick="toggleChat()" title="Healix Assistant">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
 </div>
+<div class="chat-fab-label" id="chatFabLabel"></div>
 <div class="chat-panel" id="chatPanel">
   <div class="chat-head">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -3598,18 +3616,66 @@ setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
 </div>
 <script>
 var _chatOpen = false, _chatHistory = [], _chatInited = false;
+var _twLabel = null, _twText = '', _twPaused = false, _twTimer = null;
+function _twUsername() {
+  var hd = document.querySelector('.hd-name');
+  if (hd && hd.textContent.trim()) return hd.textContent.trim();
+  return 'Healix admin';
+}
+function _twClear() {
+  if (!_twLabel) return;
+  _twLabel.innerHTML = '';
+  _twLabel.classList.remove('show');
+}
+function _twType() {
+  if (!_twLabel || _twPaused) return;
+  var i = 0;
+  _twLabel.classList.add('show');
+  var caret = document.createElement('span');
+  caret.className = 'chat-caret';
+  _twTypeLoop(i, caret);
+}
+function _twTypeLoop(i, caret) {
+  if (_twPaused) return;
+  if (i <= _twText.length) {
+    _twLabel.textContent = _twText.slice(0, i);
+    if (i < _twText.length) { _twLabel.appendChild(caret); }
+    i++;
+    _twTimer = setTimeout(function() { _twTypeLoop(i, caret); }, 35);
+  } else {
+    _twTimer = setTimeout(function() {
+      if (_twPaused) return;
+      _twLabel.textContent = _twText;
+      _twTimer = setTimeout(function() { _twClear(); _twTimer = setTimeout(_twType, 1500); }, 4000);
+    }, 600);
+  }
+}
+function startChatTypewriter() {
+  _twLabel = document.getElementById('chatFabLabel');
+  if (!_twLabel) return;
+  _twText = 'Hey ' + _twUsername() + ', how can I assist you?';
+  setTimeout(_twType, 300);
+}
 function toggleChat() {
   var p = document.getElementById('chatPanel');
   _chatOpen = !_chatOpen;
   p.classList.toggle('open', _chatOpen);
+  if (_twLabel) _twLabel.classList.toggle('hidden', _chatOpen);
+  _twPaused = _chatOpen;
   if (_chatOpen) {
+    if (_twTimer) clearTimeout(_twTimer);
     document.getElementById('chatInput').focus();
     if (!_chatInited) {
       _chatInited = true;
       addChatMsg('bot', 'Hi! I can answer questions about Healix health, diagnoses, metrics, approvals and service connectivity. Try "give me a quick health summary".');
     }
+  } else {
+    setTimeout(function() { if (!_twPaused) _twType(); }, 250);
   }
 }
+window.addEventListener('load', function() {
+  setTimeout(startChatTypewriter, 3200);
+});
 function addChatMsg(role, text) {
   var body = document.getElementById('chatBody');
   var div = document.createElement('div');
@@ -4751,7 +4817,8 @@ def start_health_server() -> threading.Thread | None:
 
     def _serve() -> None:
         try:
-            server = HTTPServer(("0.0.0.0", HEALTH_PORT), _HealthHandler)
+            server = ThreadingHTTPServer(("0.0.0.0", HEALTH_PORT), _HealthHandler)
+            server.daemon_threads = True
             log.info("Health server listening on :%d (/health, /metrics, /metrics/raw, /metrics/api, /diagnoses)", HEALTH_PORT)
             server.serve_forever()
         except Exception as e:
