@@ -1630,6 +1630,25 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .boot-welcome { font-size: 22px; font-weight: 800; color: #e6edf3; letter-spacing: -0.5px; opacity: 0; transform: translateY(8px); transition: opacity 0.45s ease, transform 0.45s ease; }
   .boot-welcome span { color: var(--blue, #58a6ff); }
   .boot-welcome.show { opacity: 1; transform: translateY(0); }
+  /* ── P4: Micro-interactions & polish ─────────────────────────────────── */
+  .btn-ripple { position: relative; overflow: hidden; }
+  .ripple { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.35); transform: scale(0); animation: rippleAnim .55s ease-out forwards; pointer-events: none; }
+  @keyframes rippleAnim { to { transform: scale(2.6); opacity: 0; } }
+  .light .ripple { background: rgba(0,0,0,0.14); }
+  .stat-card, .metrics-stat-card { transition: transform .18s ease-out, box-shadow .25s ease, border-color .2s ease; }
+  .hdr-brand h1 { background: linear-gradient(90deg, var(--text,#e6edf3) 0%, var(--blue,#58a6ff) 50%, var(--text,#e6edf3) 100%); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; animation: shimmer 5s linear infinite; }
+  .sk-wrap { padding: 8px 0; }
+  .sk-row { display: flex; gap: 12px; padding: 13px 2px; border-bottom: 1px solid var(--border-subtle,#1f2733); }
+  .sk-cell { height: 14px; border-radius: 6px; background: linear-gradient(90deg, rgba(140,160,190,0.10) 25%, rgba(140,160,190,0.22) 37%, rgba(140,160,190,0.10) 63%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+  body { transition: background-color .28s ease, color .28s ease; }
+  .theme-xfade { animation: themeFade .34s ease; }
+  @keyframes themeFade { 0% { opacity: .45; } 100% { opacity: 1; } }
+  .tab-panel.exiting { animation: tabOut .18s ease forwards; }
+  @keyframes tabOut { to { opacity: 0; transform: translateX(-8px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .ripple { display: none; }
+    .hdr-brand h1, .sk-cell { animation: none !important; }
+  }
   #boot-splash.spin .boot-shard-wrap { animation: bootSpin 1.6s linear infinite; }
   #boot-splash.spin .boot-shard { animation: none; opacity: 1; }
   #boot-splash.spin .boot-crack, #boot-splash.spin .boot-glow,
@@ -1637,7 +1656,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   @keyframes bootSpin { to { transform: rotate(360deg); } }
 </style>
 </head>
-<body>
+ <body>
 
 <div id="boot-splash">
   <div class="boot-shard-wrap boot-shake">
@@ -2201,7 +2220,10 @@ function setDisplayMode(mode, ev) {
   if (ev && ev.stopPropagation) ev.stopPropagation();
   _displayMode = mode;
   localStorage.setItem('dashboard_display_mode', mode);
+  var root = document.documentElement;
+  root.classList.add('theme-xfade');
   _applyDisplayMode();
+  setTimeout(function(){ root.classList.remove('theme-xfade'); }, 380);
 }
 function toggleDropdownPanel(id, item) {
   document.querySelectorAll('.hdr-user-dropdown-panel').forEach(function(p){p.classList.remove('open');});
@@ -2247,7 +2269,15 @@ function switchTab(name) {
   var prev = _selectedTab;
   _selectedTab = name;
   document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===name);});
-  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id==='panel-'+name);});
+  document.querySelectorAll('.tab-panel').forEach(function(p){
+    var on = p.id === 'panel-' + name;
+    if (on) { p.classList.remove('exiting'); p.classList.add('active'); }
+    else if (p.classList.contains('active')) {
+      p.classList.remove('active');
+      p.classList.add('exiting');
+      setTimeout(function(){ p.classList.remove('exiting'); }, 200);
+    }
+  });
   history.replaceState(null,'','#'+name);
   if (prev === 'metrics' && name !== 'metrics') destroyAllMetricCharts();
   if (name === 'metrics' && _lastMetricsData) { setTimeout(function(){buildAllMetricCharts(_lastMetricsData, _lastDiagsData);}, 50); }
@@ -3062,7 +3092,25 @@ function fetchApprovals() {
 }
 
 // ── Users tab ──────────────────────────────────────
+function showTableSkeleton(el) {
+  if (!el) return;
+  var cols = [18, 34, 26, 12, 10];
+  var html = '<div class="sk-wrap">';
+  for (var r = 0; r < 4; r++) {
+    html += '<div class="sk-row">';
+    for (var c = 0; c < cols.length; c++) {
+      html += '<div class="sk-cell" style="width:' + cols[c] + '%"></div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
 function fetchUsers() {
+  var el = document.getElementById('users-list');
+  if (el && el.getElementsByTagName('table').length === 0 && !el.querySelector('.sk-wrap')) {
+    showTableSkeleton(el);
+  }
   fetch('/users').then(function(r){return r.json();}).then(function(d){
     renderUsers(d.users||[]);
   }).catch(function(){});
@@ -3462,6 +3510,43 @@ function poll() {
 poll();
 _pollInterval = setInterval(poll,5000);
 setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
+// ── P4: Micro-interactions & polish ─────────────────────────────────────────
+function p4ReduceMotion() { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+function p4NoHover() { return window.matchMedia && window.matchMedia('(hover: none)').matches; }
+(function initRipple(){
+  if (p4ReduceMotion()) return;
+  document.addEventListener('pointerdown', function(e){
+    var btn = e.target && e.target.closest ? e.target.closest('button, .tab-btn, [role="button"], .vtl-dot') : null;
+    if (!btn) return;
+    if (getComputedStyle(btn).overflow === 'visible') btn.style.overflow = 'hidden';
+    var r = btn.getBoundingClientRect();
+    var size = Math.max(r.width, r.height) * 2.2;
+    var s = document.createElement('span');
+    s.className = 'ripple';
+    s.style.width = s.style.height = size + 'px';
+    s.style.left = (e.clientX - r.left - size / 2) + 'px';
+    s.style.top = (e.clientY - r.top - size / 2) + 'px';
+    btn.appendChild(s);
+    setTimeout(function(){ if (s.parentNode) s.parentNode.removeChild(s); }, 600);
+  });
+})();
+(function initTilt(){
+  if (p4NoHover() || p4ReduceMotion()) return;
+  document.addEventListener('pointermove', function(e){
+    var card = e.target && e.target.closest ? e.target.closest('.stat-card, .metrics-stat-card') : null;
+    if (card) {
+      var r = card.getBoundingClientRect();
+      var px = (e.clientX - r.left) / r.width - 0.5;
+      var py = (e.clientY - r.top) / r.height - 0.5;
+      card.style.animation = 'none';
+      card.style.transform = 'perspective(700px) rotateX(' + (-py * 4).toFixed(2) + 'deg) rotateY(' + (px * 4).toFixed(2) + 'deg) translateY(-1px)';
+    }
+  });
+  document.addEventListener('pointerout', function(e){
+    var card = e.target && e.target.closest ? e.target.closest('.stat-card, .metrics-stat-card') : null;
+    if (card) card.style.transform = '';
+  });
+})();
 </script>
 
 <div class="modal-overlay" id="pw-modal">
