@@ -115,8 +115,8 @@ REPORT_ONLY=true
 | File | Purpose | Lines |
 |---|---|---|
 | `agent.py` | Main orchestrator — wires all modules, runs monitor loop | ~915 |
-| `config.py` | All environment variables loaded and validated | ~200 |
-| `providers.py` | LLM provider registry, callers, chain logic | ~150 |
+| `config.py` | All environment variables loaded and validated | ~210 |
+| `providers.py` | LLM provider registry, callers, chain logic, plain-text chat caller | ~280 |
 | `prompts.py` | System prompt, few-shot examples, prompt builder | ~180 |
 | `k8s_engine.py` | K8s client, pod health, deployment helpers, actions, event watcher | ~350 |
 | `docker_engine.py` | Docker client, container health, actions | ~130 |
@@ -125,7 +125,7 @@ REPORT_ONLY=true
 | `rollback.py` | Post-heal verification and automatic rollback | ~100 |
 | `cost.py` | Cost estimation for restarts, memory changes, downtime | ~80 |
 | `notifications.py` | Email senders (dev, resolution, infra, rollback, approval) + n8n | ~430 |
-| `observability.py` | Health server, metrics, diagnosis store, auth/SSO, profiles, dashboard UI, approvals tab, PDF reports | ~4400 |
+| `observability.py` | Health server, metrics, diagnosis store, auth/SSO, profiles, dashboard UI, approvals tab, PDF reports, chat assistant | ~4800 |
 | `prometheus.py` | Fetches CPU/memory metrics from Prometheus for LLM context | ~178 |
 | `k8s_events.py` | Fetches Kubernetes Warning events for diagnosis context | ~167 |
 | `approval.py` | Approval store, request/response, executor thread for human-in-the-loop | ~330 |
@@ -304,7 +304,19 @@ Includes KPI cards, per-day trend bar chart, platform/route breakdowns, top-reso
 
 ### 13. Boot Splash
 
-On every dashboard load the Healix logo cracks apart and snaps back together (jagged crack lines, join glow, "Initialising Healix…" status, then "Welcome, <user>"), before the overlay fades out.
+On every dashboard load the Healix logo cracks apart and snaps back together (jagged crack lines, join glow, "Initialising Healix…" status, then "Welcome, <user>"), before the overlay fades out. On a reload the logo simply spins with no text.
+
+### 14. Chat Assistant (read-only)
+
+A floating chat widget (bottom-right FAB) answers questions about the live system. By default it uses **Ollama** (via `CHAT_PROVIDER_CHAIN`), keeping Groq reserved for the diagnosis flow.
+
+- `POST /chat` (auth required) accepts `{message, history}` and returns `{ok, reply, provider}`
+- The bot is given live context each turn: recent diagnoses, agent metrics (heals/LLM calls/rollbacks/PDB blocks), pending approvals, and service connectivity
+- Conversational tone: friendly greetings, short answers, reassurance when healthy
+- Read-only — it never proposes or triggers healing actions
+- Typing indicator + bubble history in the dashboard; each message is one LLM call
+
+Config: `CHAT_ENABLED`, `CHAT_TIMEOUT_SEC`, `CHAT_MAX_TURNS`, `CHAT_PROVIDER_CHAIN`
 
 ---
 
@@ -496,6 +508,15 @@ DIAGNOSIS_PROVIDER_CHAIN=groq,gemini    # Try only Groq then Gemini
 |---|---|---|
 | `DIAGNOSIS_HISTORY_SIZE` | `200` | Max in-memory diagnoses kept for the dashboard |
 
+### Chat Assistant
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHAT_ENABLED` | `true` | Enable the dashboard chat widget + `POST /chat` |
+| `CHAT_TIMEOUT_SEC` | `300` | Per-provider timeout for chat LLM calls (Ollama can be slow) |
+| `CHAT_MAX_TURNS` | `6` | Conversation turns sent as context per message |
+| `CHAT_PROVIDER_CHAIN` | `ollama` (if Ollama enabled) | Provider order for chat; e.g. `ollama,gemini` for a cloud fallback |
+
 ---
 
 ## Observability Endpoints
@@ -552,6 +573,10 @@ Google OAuth 2.0 sign-in flow.
 ### `GET /users/me` / `POST /users/profile`
 
 Current user info (includes `profile_pic`) and profile updates (username, photo data URL).
+
+### `POST /chat`
+
+Chat Assistant Q&A. Body: `{"message": "...", "history": [{"role": "user|assistant", "content": "..."}]}`. Returns `{"ok": true, "reply": "...", "provider": "groq"}`. Powered by the LLM provider chain with live system context.
 
 ### `POST /users/create` / `POST /users/update` / `POST /users/delete`
 

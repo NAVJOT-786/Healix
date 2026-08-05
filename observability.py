@@ -38,6 +38,7 @@ from config import (
     DASHBOARD_USER, DASHBOARD_PASSWORD,
     APPROVAL_DASHBOARD_URL,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_ALLOWED_DOMAINS, GOOGLE_REDIRECT_URI,
+    GEMINI_API_KEY, CHAT_ENABLED, CHAT_TIMEOUT_SEC, CHAT_MAX_TURNS, CHAT_PROVIDER_CHAIN,
 )
 from storage import StorageBackend
 from notifications import send_welcome_email, send_password_reset_email
@@ -426,7 +427,162 @@ _dashboard_config = {
     "provider_chain": DIAGNOSIS_PROVIDER_CHAIN,
     "events_enabled": WATCH_EVENTS_ENABLED,
     "google_sso": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+    "chat_enabled": CHAT_ENABLED,
+    "chat_provider_chain": CHAT_PROVIDER_CHAIN,
+    "chat_timeout_ms": (CHAT_TIMEOUT_SEC + 30) * 1000,
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CHAT ASSISTANT — Read-only Q&A backed by the LLM provider chain
+# ══════════════════════════════════════════════════════════════════════════════
+
+_chat_registry: dict | None = None
+_chat_gemini_model: Any = None
+_chat_providers_imported = False
+
+
+def _ensure_chat_backend():
+    global _chat_registry, _chat_gemini_model, _chat_providers_imported
+    if _chat_providers_imported:
+        return _chat_registry, _chat_gemini_model
+    from providers import build_provider_registry
+    _chat_registry = build_provider_registry()
+    if GEMINI_API_KEY:
+        try:
+            import google.generativeai as _genai
+            _genai.configure(api_key=GEMINI_API_KEY)
+            _chat_gemini_model = _genai.GenerativeModel("gemini-2.5-flash")
+        except Exception as e:
+            log.warning("Chat: Gemini init failed: %s", e)
+    _chat_providers_imported = True
+    return _chat_registry, _chat_gemini_model
+
+
+def _chat_context_block() -> str:
+    lines: list[str] = []
+
+    md = metrics.to_dict()
+    lines.append("- Agent metrics: %d heal action(s), %d LLM call(s), %d rollback(s), %d PDB block(s)" % (
+        md.get("total_heals", 0), md.get("total_llm_calls", 0),
+        md.get("rollbacks", 0), md.get("pdb_blocks", 0)))
+
+    recs = diagnosis_store.to_list()[:8]
+    if recs:
+        lines.append("- Recent diagnoses (newest first):")
+        for r in recs:
+            target = r.get("name", "?")
+            where = r.get("namespace") or r.get("location") or ""
+            lines.append("  * %s [%s] %s on %s/%s -> %s (%s)" % (
+                r.get("timestamp", "?"), r.get("platform", "?"),
+                r.get("issue", ""), where, target,
+                r.get("action", r.get("action_result", "")), r.get("route", "?")))
+    else:
+        lines.append("- No diagnoses recorded yet.")
+
+    if _approval_store:
+        try:
+            ap = _approval_store.to_dict()
+            pending = ap.get("pending_count", 0)
+            lines.append("- Approvals: %d pending" % pending)
+        except Exception:
+            lines.append("- Approvals: unavailable")
+
+    try:
+        svc = service_status.to_dict()
+        status_parts = []
+        for name, st in svc.items():
+            state = "connected" if st.get("connected") else "unavailable"
+            if st.get("configured"):
+                status_parts.append("%s=%s" % (name, state))
+        lines.append("- Service connectivity: %s" % (", ".join(status_parts) or "none configured"))
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
+
+def _build_chat_prompt(message: str, history: list[dict]) -> str:
+    context = _chat_context_block()
+    prompt = (
+        "You are Healix Assistant, a friendly and knowledgeable SRE teammate for the "
+        "Healix Kubernetes/Docker auto-healer dashboard. Talk naturally and warmly, like "
+        "a helpful coworker — never like a robot.\n\n"
+        "STYLE RULES:\n"
+        "- If the user greets you (hi, hello, hey, yo...), greet them back warmly and add "
+        "a one-line teaser of current status (e.g. 'Everything's looking good — 0 heals so "
+        "far' or 'There's 1 heal waiting for approval').\n"
+        "- Keep replies short and conversational. One or two sentences is usually enough; "
+        "use a short list only when it genuinely helps.\n"
+        "- Answer exactly what was asked. Don't dump raw data unless it's useful.\n"
+        "- When things are healthy, say so reassuringly.\n"
+        "- If the live data doesn't contain the answer, say that simply and suggest what "
+        "they could ask instead.\n"
+        "- Use the exact names/numbers from the live data.\n"
+        "- You are read-only: never propose or trigger any healing action.\n\n"
+        "LIVE SYSTEM DATA:\n%s\n\n"
+        "EXAMPLES OF GOOD REPLIES:\n"
+        "User: hi\n"
+        "Assistant: Hey! Good to see you. Quick status: 0 heals so far, 1 approval pending, "
+        "and everything's connected except n8n. What would you like to dig into?\n\n"
+        "User: give me a quick health summary\n"
+        "Assistant: Sure — here's the short version: no heals have run yet, k8s, docker, "
+        "loki and prometheus are all connected, n8n is unreachable, and there's 1 approval "
+        "waiting on your call.\n\n"
+        "User: which container is unhealthy\n"
+        "Assistant: The data shows two recent items: a dev issue on "
+        "WILASSETA0233/breaking_env_demo, and demo/test-auto-healed-7957b7f456-2ntrc which "
+        "has a suggested memory-limit increase still awaiting approval.\n\n"
+        "CONVERSATION:\n" % context
+    )
+    for turn in history[-CHAT_MAX_TURNS * 2:]:
+        role = turn.get("role")
+        content = str(turn.get("content", ""))[:2000]
+        if role == "user":
+            prompt += "User: %s\n" % content
+        elif role == "assistant":
+            prompt += "Assistant: %s\n" % content
+    prompt += "User: %s\nAssistant:" % message
+    return prompt
+
+
+def _handle_chat(self) -> None:
+    if not CHAT_ENABLED:
+        self._respond(404, {"error": "chat disabled"})
+        return
+    cookie = self.headers.get("Cookie", "")
+    if not _validate_session(cookie):
+        self._respond(401, {"error": "unauthorized"})
+        return
+    data = self._read_body() or {}
+
+    message = str(data.get("message", "")).strip()[:2000]
+    if not message:
+        self._respond(400, {"error": "empty message"})
+        return
+
+    history = data.get("history") or []
+    if not isinstance(history, list):
+        history = []
+    history = [h for h in history if isinstance(h, dict)][-CHAT_MAX_TURNS * 2:]
+
+    try:
+        from providers import chat_with_providers
+        registry, gemini_model = _ensure_chat_backend()
+        prompt = _build_chat_prompt(message, history)
+        reply, provider = chat_with_providers(prompt, registry, gemini_model, CHAT_PROVIDER_CHAIN)
+        if not reply:
+            self._respond(502, {"error": "No LLM provider available. Check API keys / Ollama.", "ok": False})
+            return
+        self._respond(200, {"ok": True, "reply": reply.strip(), "provider": provider})
+    except (BrokenPipeError, ConnectionResetError):
+        log.info("Chat: client disconnected before reply")
+    except Exception as e:
+        log.error("Chat handler error: %s", e)
+        try:
+            self._respond(500, {"error": "Chat failed", "ok": False})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3367,6 +3523,153 @@ setInterval(function(){if(_selectedTab==='users')fetchUsers();}, 10000);
   </div>
 </div>
 
+<!-- Chat Assistant -->
+<style>
+  .chat-fab {
+    position: fixed; right: 22px; bottom: 22px; z-index: 1001;
+    width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--border-glow);
+    background: var(--surface); backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    box-shadow: 0 6px 24px var(--card-shadow); transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .chat-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(88,166,255,0.18); }
+  .chat-fab svg { width: 26px; height: 26px; color: var(--blue); }
+  .chat-panel {
+    position: fixed; right: 22px; bottom: 90px; z-index: 1001;
+    width: 368px; max-width: calc(100vw - 32px); height: 480px; max-height: calc(100vh - 140px);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 18px 50px var(--card-shadow); backdrop-filter: blur(14px);
+    display: flex; flex-direction: column; overflow: hidden;
+    opacity: 0; transform: translateY(12px) scale(0.97); pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .chat-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .chat-head {
+    display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle); background: var(--header-bg);
+  }
+  .chat-head svg { width: 22px; height: 22px; color: var(--blue); }
+  .chat-head .chat-title { font-size: 14px; font-weight: 700; color: var(--text); }
+  .chat-head .chat-sub { font-size: 11px; color: var(--text2); }
+  .chat-head .chat-close { margin-left: auto; cursor: pointer; color: var(--text2); font-size: 18px; line-height: 1; background: none; border: none; padding: 4px; }
+  .chat-head .chat-close:hover { color: var(--text); }
+  .chat-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-msg { max-width: 82%; padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .chat-msg.user { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
+  .chat-msg.bot { align-self: flex-start; background: var(--box-bg); border: 1px solid var(--border-subtle); color: var(--text); border-bottom-left-radius: 4px; }
+  .chat-msg.err { align-self: flex-start; background: rgba(248,81,73,0.12); border: 1px solid rgba(248,81,73,0.35); color: var(--red); }
+  .chat-msg .chat-provider { display: block; margin-top: 6px; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.6px; }
+  .chat-typing { align-self: flex-start; display: none; gap: 4px; padding: 10px 14px; background: var(--box-bg); border: 1px solid var(--border-subtle); border-radius: 12px; border-bottom-left-radius: 4px; }
+  .chat-typing.show { display: flex; }
+  .chat-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--text2); animation: chatBlink 1.2s infinite; }
+  .chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+  .chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes chatBlink { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.9); } 40% { opacity: 1; transform: scale(1); } }
+  .chat-foot { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border-subtle); background: var(--header-bg); }
+  .chat-foot input {
+    flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-subtle);
+    background: var(--input-bg); color: var(--text); font-size: 13px; outline: none;
+  }
+  .chat-foot input:focus { border-color: var(--blue); }
+  .chat-foot button {
+    border: none; border-radius: 8px; padding: 0 16px; background: var(--blue); color: #fff;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .chat-foot button:disabled { opacity: 0.55; cursor: default; }
+</style>
+<div class="chat-fab" id="chatFab" onclick="toggleChat()" title="Healix Assistant">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+</div>
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-head">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
+    <div>
+      <div class="chat-title">Healix Assistant</div>
+      <div class="chat-sub">Read-only · Live system Q&A</div>
+    </div>
+    <button class="chat-close" onclick="toggleChat()">&times;</button>
+  </div>
+  <div class="chat-body" id="chatBody"></div>
+  <div class="chat-typing" id="chatTyping"><span></span><span></span><span></span></div>
+  <div class="chat-foot">
+    <input type="text" id="chatInput" placeholder="Ask about system health..." autocomplete="off" onkeydown="if(event.key==='Enter')sendChat()">
+    <button id="chatSendBtn" onclick="sendChat()">Send</button>
+  </div>
+</div>
+<script>
+var _chatOpen = false, _chatHistory = [], _chatInited = false;
+function toggleChat() {
+  var p = document.getElementById('chatPanel');
+  _chatOpen = !_chatOpen;
+  p.classList.toggle('open', _chatOpen);
+  if (_chatOpen) {
+    document.getElementById('chatInput').focus();
+    if (!_chatInited) {
+      _chatInited = true;
+      addChatMsg('bot', 'Hi! I can answer questions about Healix health, diagnoses, metrics, approvals and service connectivity. Try "give me a quick health summary".');
+    }
+  }
+}
+function addChatMsg(role, text) {
+  var body = document.getElementById('chatBody');
+  var div = document.createElement('div');
+  div.className = 'chat-msg ' + (role === 'user' ? 'user' : 'bot');
+  div.textContent = text;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+  return div;
+}
+function setTyping(on) {
+  var t = document.getElementById('chatTyping');
+  t.classList.toggle('show', on);
+  document.getElementById('chatSendBtn').disabled = on;
+}
+function sendChat() {
+  var input = document.getElementById('chatInput');
+  var msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  addChatMsg('user', msg);
+  _chatHistory.push({role: 'user', content: msg});
+  setTyping(true);
+  var aborter = new AbortController();
+  var timer = setTimeout(function() { aborter.abort(); }, (CONFIG && CONFIG.chat_timeout_ms) || 70000);
+  fetch('/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: msg, history: _chatHistory.slice(-12)}),
+    signal: aborter.signal
+  }).then(function(r) {
+    clearTimeout(timer);
+    if (r.status === 401) { window.location.href = '/login'; throw new Error('unauthorized'); }
+    return r.json();
+  }).then(function(j) {
+    setTyping(false);
+    if (j && j.ok) {
+      _chatHistory.push({role: 'assistant', content: j.reply});
+      var el = addChatMsg('bot', j.reply);
+      if (j.provider) {
+        var p = document.createElement('span');
+        p.className = 'chat-provider';
+        p.textContent = 'via ' + j.provider;
+        el.appendChild(p);
+      }
+    } else if (j && j.error) {
+      addChatMsg('err', j.error);
+    }
+  }).catch(function(e) {
+    clearTimeout(timer);
+    setTyping(false);
+    if (e && e.message === 'unauthorized') return;
+    if (e && e.name === 'AbortError') {
+      addChatMsg('err', 'Still thinking... the LLM provider is slow. Try again or check the provider chain.');
+    } else {
+      addChatMsg('err', 'Connection failed. Is the agent running?');
+    }
+  });
+}
+</script>
+
 </body>
 </html>"""
 
@@ -4384,6 +4687,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 log.info("[REJECT] Failed to reject id=%s (not found or already processed)", approval_id)
                 self._respond(400, {"ok": False, "error": "Approval not found or already processed"})
 
+        elif self.path == "/chat" and METRICS_ENABLED:
+            _handle_chat(self)
         else:
             self._respond(404, {"error": "not found"})
 

@@ -139,6 +139,15 @@ HEALTH_PORT    = int(os.getenv("HEALTH_PORT", "8080"))
 METRICS_ENABLED = os.getenv("METRICS_ENABLED", "true").lower() == "true"
 DIAGNOSIS_HISTORY_SIZE = int(os.getenv("DIAGNOSIS_HISTORY_SIZE", "200"))
 
+# ── Chat Assistant ───────────────────────────────────────────────────────────
+
+CHAT_ENABLED     = os.getenv("CHAT_ENABLED", "true").lower() == "true"
+CHAT_TIMEOUT_SEC = int(os.getenv("CHAT_TIMEOUT_SEC", "300"))
+CHAT_MAX_TURNS   = int(os.getenv("CHAT_MAX_TURNS", "6"))
+CHAT_PROVIDER_CHAIN: list[str] = [
+    p.strip() for p in os.getenv("CHAT_PROVIDER_CHAIN", "").split(",") if p.strip()
+] or (["ollama"] if OLLAMA_ENABLED else list(DIAGNOSIS_PROVIDER_CHAIN))
+
 # ── Dashboard Auth ───────────────────────────────────────────────────────────
 
 DASHBOARD_USER     = os.getenv("DASHBOARD_USER", "admin")
