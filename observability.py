@@ -3535,10 +3535,14 @@ function p4NoHover() { return window.matchMedia && window.matchMedia('(hover: no
   document.addEventListener('pointermove', function(e){
     var card = e.target && e.target.closest ? e.target.closest('.stat-card, .metrics-stat-card') : null;
     if (card) {
+      if (card.style.animation !== 'none') {
+        var op = getComputedStyle(card).opacity || '1';
+        card.style.animation = 'none';
+        card.style.opacity = op;
+      }
       var r = card.getBoundingClientRect();
       var px = (e.clientX - r.left) / r.width - 0.5;
       var py = (e.clientY - r.top) / r.height - 0.5;
-      card.style.animation = 'none';
       card.style.transform = 'perspective(700px) rotateX(' + (-py * 4).toFixed(2) + 'deg) rotateY(' + (px * 4).toFixed(2) + 'deg) translateY(-1px)';
     }
   });
