@@ -1196,6 +1196,29 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .perm-tog:hover { opacity: 0.85; transform: scale(1.04); }
   .perm-tog.active { box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
 
+  /* ── Mobile: hamburger + off-canvas nav ──────────── */
+  .menu-btn { display: none; align-items: center; justify-content: center; flex-direction: column; gap: 4px; width: 38px; height: 38px; background: none; border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer; padding: 0; flex-shrink: 0; transition: border-color 0.2s, background 0.2s; }
+  .menu-btn:hover { border-color: var(--blue); background: var(--hover-tint); }
+  .menu-line { display: block; width: 16px; height: 2px; border-radius: 2px; background: var(--text2); transition: transform 0.25s ease, opacity 0.2s ease, background 0.2s; }
+  .menu-btn:hover .menu-line { background: var(--blue); }
+  .menu-btn.open .menu-line:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+  .menu-btn.open .menu-line:nth-child(2) { opacity: 0; }
+  .menu-btn.open .menu-line:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+  .nav-backdrop { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
+  .nav-backdrop.open { opacity: 1; pointer-events: auto; }
+  .mobile-nav { position: fixed; top: 0; bottom: 0; left: 0; z-index: 950; width: min(280px, 82vw); background: var(--sp-bg); border-right: 1px solid var(--glass-border); transform: translateX(-105%); transition: transform 0.28s cubic-bezier(0.4,0,0.2,1); display: flex; flex-direction: column; box-shadow: 8px 0 32px rgba(0,0,0,0.35); }
+  .mobile-nav.open { transform: translateX(0); }
+  .mobile-nav-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); }
+  .mobile-nav-title { font-size: 17px; font-weight: 800; color: var(--text); letter-spacing: -0.3px; }
+  .mobile-nav-close { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; background: none; border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text2); cursor: pointer; transition: all 0.2s; }
+  .mobile-nav-close:hover { color: var(--blue); border-color: var(--blue); background: var(--hover-tint); }
+  .mobile-nav-body { padding: 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  .mobile-nav-body .mobile-tab { width: 100%; text-align: left; padding: 13px 16px; font-size: 14px; border-radius: 8px; display: flex; align-items: center; gap: 10px; }
+  .mobile-nav-body .mobile-tab.active { color: var(--blue); background: rgba(88,166,255,0.12); }
+  .mobile-nav-body .mobile-tab.active::after { display: none; }
+  .mobile-nav-body .mobile-tab:hover { background: var(--hover-tint); }
+  body.menu-open { overflow: hidden; }
+
   /* ── Main Content ──────────────────────────────── */
   .main { padding-top: 76px; padding-bottom: 40px; width: 100%; padding-left: 20px; padding-right: 20px; }
   .tab-panel { display: none; }
@@ -1554,8 +1577,18 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     .stat-card:nth-child(5) { grid-column: span 2; }
     .status-grid { grid-template-columns: repeat(2, 1fr); }
     .hdr-tabs { display: none; }
-    .hdr { padding: 0 16px; gap: 12px; }
+    .menu-btn { display: flex; }
+    .hdr-sep { display: none; }
+    .hdr { padding: 0 16px; gap: 10px; }
     .main { padding-left: 12px; padding-right: 12px; }
+  }
+  @media (max-width: 640px) {
+    .hdr-status { display: none; }
+    .hdr-clock-toggle .tz-label { display: none; }
+  }
+  @media (max-width: 420px) {
+    .hdr-clock-toggle { display: none; }
+    .hdr-brand h1 { font-size: 15px; }
   }
 
   /* ── Change Password Modal ──────────────────────── */
@@ -1648,12 +1681,33 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   @media (prefers-reduced-motion: reduce) {
     .ripple { display: none; }
     .hdr-brand h1, .sk-cell { animation: none !important; }
+    .chat-typing span { animation: none; }
   }
   #boot-splash.spin .boot-shard-wrap { animation: bootSpin 1.6s linear infinite; }
   #boot-splash.spin .boot-shard { animation: none; opacity: 1; }
   #boot-splash.spin .boot-crack, #boot-splash.spin .boot-glow,
   #boot-splash.spin .boot-status, #boot-splash.spin .boot-welcome { display: none; }
   @keyframes bootSpin { to { transform: rotate(360deg); } }
+  /* ── Rocket approval alert ────────────────────────────────────────────── */
+  #rocket-fly { position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none; width: 0; height: 0; }
+  .rocket-wrap { position: absolute; left: 0; top: 0; width: 56px; height: 92px; margin-left: -28px; margin-top: -46px; }
+  .rocket-halo { position: absolute; inset: -26px; border-radius: 50%; background: radial-gradient(circle, rgba(88,166,255,0.38), rgba(88,166,255,0) 70%); animation: rocketHalo 1.1s ease-in-out infinite; }
+  @keyframes rocketHalo { 0%,100% { opacity: .45; transform: scale(1); } 50% { opacity: 1; transform: scale(1.18); } }
+  .rocket-ship { position: absolute; inset: 0; animation: rocketShake .12s linear infinite; }
+  .rocket-ship svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 14px rgba(88,166,255,0.65)) drop-shadow(0 0 3px rgba(188,140,255,0.55)); }
+  @keyframes rocketShake { 0%,100% { transform: translate(0,0) rotate(-0.6deg); } 50% { transform: translate(0,1px) rotate(0.6deg); } }
+  .rocket-flame { position: absolute; left: 50%; top: 76%; width: 14px; height: 32px; transform: translateX(-50%); transform-origin: top center; animation: rocketFlame .16s ease-in-out infinite alternate; }
+  .rocket-flame::before { content:''; position: absolute; inset: 0; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: linear-gradient(180deg, #ffd25c 0%, #ff9d3c 35%, #ff5e3a 60%, rgba(255,94,58,0) 100%); filter: drop-shadow(0 0 6px rgba(255,140,60,0.8)); }
+  .rocket-flame::after { content:''; position: absolute; inset: -8px; border-radius: 50%; background: radial-gradient(circle, rgba(255,150,70,0.55), rgba(255,150,70,0) 70%); }
+  @keyframes rocketFlame { 0% { transform: translateX(-50%) scaleY(1) scaleX(1); } 100% { transform: translateX(-50%) scaleY(1.45) scaleX(0.75); } }
+  .rocket-smoke { position: absolute; left: 50%; top: 78%; width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle, rgba(185,195,215,0.55), rgba(185,195,215,0)); animation: rocketSmoke 1.1s ease-out forwards; }
+  @keyframes rocketSmoke { 0% { opacity: .9; transform: translate(-50%, 0) scale(.4); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx,0px)), -30px) scale(1.8); } }
+  .rocket-spark { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: #58a6ff; box-shadow: 0 0 10px #58a6ff; animation: rocketSpark .9s ease-out forwards; }
+  @keyframes rocketSpark { 0% { opacity: 1; transform: translate(0,0) scale(1); } 100% { opacity: 0; transform: translate(var(--dx,0px), var(--dy,0px)) scale(.2); } }
+  .rocket-pop { animation: rocketPop .55s ease; }
+  @keyframes rocketPop { 0% { transform: scale(1); } 30% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  .tab-badge.bump { animation: badgeBump .6s cubic-bezier(0.34,1.56,0.64,1); }
+  @keyframes badgeBump { 0% { transform: scale(1); } 40% { transform: scale(1.5); } 100% { transform: scale(1); } }
 </style>
 </head>
  <body>
@@ -1680,16 +1734,20 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   <div class="boot-status">Initialising Healix<span class="dot" id="boot-dots"></span></div>
   <div class="boot-welcome" id="boot-welcome">Welcome<span id="boot-who"></span></div>
 </div>
-<script>
+ <script>
 (function() {
   var s = document.getElementById('boot-splash');
   if (!s) return;
+  function bootDone() {
+    window.__healixBootDone = true;
+    try { document.dispatchEvent(new Event('healix-boot-end')); } catch(e) {}
+  }
   var fresh = false;
   try { fresh = sessionStorage.getItem('healixFresh') === '1'; sessionStorage.removeItem('healixFresh'); } catch(e) {}
   if (!fresh) {
     s.classList.add('spin');
     setTimeout(function() { s.classList.add('fade'); }, 1100);
-    setTimeout(function() { if (s.parentNode) s.parentNode.removeChild(s); }, 1750);
+    setTimeout(function() { bootDone(); if (s.parentNode) s.parentNode.removeChild(s); }, 1750);
     return;
   }
   var dots = document.getElementById('boot-dots'), n = 0;
@@ -1703,7 +1761,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     if (w) w.classList.add('show');
   }, 1150);
   setTimeout(function() { s.classList.add('fade'); clearInterval(dint); }, 2250);
-  setTimeout(function() { if (s.parentNode) s.parentNode.removeChild(s); }, 2900);
+  setTimeout(function() { bootDone(); if (s.parentNode) s.parentNode.removeChild(s); }, 2900);
 })();
 </script>
 
@@ -1720,7 +1778,12 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <div id="toasts"></div>
 <div id="card-tooltip" class="card-tooltip"></div>
 
-<header class="hdr">
+ <header class="hdr">
+      <button class="menu-btn" id="menu-btn" aria-label="Open menu" onclick="toggleMobileNav(event)">
+        <span class="menu-line"></span>
+        <span class="menu-line"></span>
+        <span class="menu-line"></span>
+      </button>
       <div class="hdr-brand" onclick="switchTab('overview')" style="cursor:pointer">
     <svg class="logo-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--blue)"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/><circle cx="12" cy="12" r="3"/></svg>
     <h1>Healix</h1>
@@ -1800,7 +1863,27 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
   </div>
-</header>
+ </header>
+
+<div class="nav-backdrop" id="nav-backdrop" onclick="closeMobileNav()"></div>
+<aside class="mobile-nav" id="mobile-nav" aria-label="Navigation">
+  <div class="mobile-nav-head">
+    <div class="mobile-nav-title">Healix</div>
+    <button class="mobile-nav-close" onclick="closeMobileNav()" aria-label="Close menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+  <nav class="mobile-nav-body">
+    <button class="tab-btn mobile-tab active" data-tab="overview">Overview</button>
+    <button class="tab-btn mobile-tab" data-tab="pods" id="m-pods-tab">Pods</button>
+    <button class="tab-btn mobile-tab" data-tab="containers" id="m-containers-tab">Containers</button>
+    <button class="tab-btn mobile-tab" data-tab="timeline">Timeline</button>
+    <button class="tab-btn mobile-tab" data-tab="llm">LLM</button>
+    <button class="tab-btn mobile-tab" data-tab="metrics">Metrics</button>
+    <button class="tab-btn mobile-tab" data-tab="approvals" id="m-approvals-tab">Approvals</button>
+    <button class="tab-btn mobile-tab" data-tab="reports">Reports</button>
+  </nav>
+</aside>
 
 <div class="sp-backdrop" id="sp-backdrop" onclick="closeSidePanel()"></div>
 <div class="sp" id="side-panel">
@@ -2264,6 +2347,28 @@ function pollStatus() {
 pollStatus();
 setInterval(pollStatus, 30000);
 
+function openMobileNav() {
+  var n = document.getElementById('mobile-nav'), b = document.getElementById('nav-backdrop'), m = document.getElementById('menu-btn');
+  if (n) n.classList.add('open');
+  if (b) b.classList.add('open');
+  if (m) m.classList.add('open');
+  document.body.classList.add('menu-open');
+}
+function closeMobileNav() {
+  var n = document.getElementById('mobile-nav'), b = document.getElementById('nav-backdrop'), m = document.getElementById('menu-btn');
+  if (n) n.classList.remove('open');
+  if (b) b.classList.remove('open');
+  if (m) m.classList.remove('open');
+  document.body.classList.remove('menu-open');
+}
+function toggleMobileNav(e) {
+  if (e) { e.stopPropagation(); }
+  var n = document.getElementById('mobile-nav');
+  if (n && n.classList.contains('open')) closeMobileNav(); else openMobileNav();
+}
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMobileNav(); });
+document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('click',function(){switchTab(b.dataset.tab);if (b.closest('.mobile-nav')) closeMobileNav();});});
+
 function switchTab(name) {
   if ((name === 'approvals' && !_canViewApprovals) || (name === 'pods' && !_canViewPods) || (name === 'containers' && !_canViewContainers)) { name = 'overview'; }
   var prev = _selectedTab;
@@ -2281,8 +2386,7 @@ function switchTab(name) {
   history.replaceState(null,'','#'+name);
   if (prev === 'metrics' && name !== 'metrics') destroyAllMetricCharts();
   if (name === 'metrics' && _lastMetricsData) { setTimeout(function(){buildAllMetricCharts(_lastMetricsData, _lastDiagsData);}, 50); }
-}
-document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('click',function(){switchTab(b.dataset.tab);});});
+ }
 (function(){var h=location.hash.replace('#','');if(VALID_TABS.includes(h))switchTab(h);})();
 document.querySelectorAll('#panel-metrics .range-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#panel-metrics .range-btn').forEach(function(x){x.classList.remove('active');});b.classList.add('active');_metricsTimeRange=b.dataset.range;if(_lastMetricsData)buildAllMetricCharts(_lastMetricsData,_lastDiagsData);});});
 document.getElementById('metrics-refresh-interval').addEventListener('change',function(){
@@ -2947,6 +3051,118 @@ function destroyAllMetricCharts() {
 var _lastMetricsData = null;
 var _lastDiagsData = [];
 var _lastApprovalsData = [];
+var _rocketCooldown = 0;
+var _seenPendingIds = null;
+
+function activePendingIds(reqs) {
+  return reqs.filter(function(r){return !r.deleted && r.status==='pending';}).map(function(r){return r.id;});
+}
+
+function loadSeenPendingIds() {
+  if (_seenPendingIds !== null) return _seenPendingIds;
+  _seenPendingIds = [];
+  try {
+    var raw = localStorage.getItem('healix_seen_pending');
+    if (raw) {
+      var arr = JSON.parse(raw);
+      if (arr && arr instanceof Array) _seenPendingIds = arr;
+    }
+  } catch (e) {}
+  return _seenPendingIds;
+}
+
+function saveSeenPendingIds(ids) {
+  _seenPendingIds = ids.slice();
+  try { localStorage.setItem('healix_seen_pending', JSON.stringify(ids)); } catch (e) {}
+}
+
+function fireApprovalRocket(delayMs) {
+  var now = Date.now();
+  if (now < _rocketCooldown) return;
+  _rocketCooldown = now + (delayMs ? delayMs + 3000 : 2000);
+  var tab = document.getElementById('approvals-tab');
+  if (!tab) return;
+  var target = tab.getBoundingClientRect();
+  var tx = target.left + target.width / 2;
+  var ty = target.top + target.height / 2;
+  var sx = 18, sy = window.innerHeight - 40;
+
+  function launch() {
+    if (_selectedTab === 'approvals') return;
+    var host = document.createElement('div');
+    host.id = 'rocket-fly';
+    document.body.appendChild(host);
+
+    var wrap = document.createElement('div');
+    wrap.className = 'rocket-wrap';
+    wrap.innerHTML = '<div class="rocket-halo"></div><div class="rocket-ship"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="rg-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e8efff"/><stop offset="1" stop-color="#9fb6dd"/></linearGradient></defs><path d="M12 1c2.4 2.4 3.6 4.6 3.6 7.2 0 1.4-.3 2.7-.8 3.8h-5.6c-.5-1.1-.8-2.4-.8-3.8C8.4 5.6 9.6 3.4 12 1Z" fill="url(#rg-body)" stroke="#58a6ff" stroke-width="1"/><path d="M12 12v5" stroke="#58a6ff" stroke-width="1.2" stroke-linecap="round"/><path d="M9.2 17h5.6l-1 4H10l-.8-4Z" fill="#58a6ff"/><path d="M9.6 17l-.9 4M14.4 17l.9 4" stroke="#58a6ff" stroke-width="1.2" stroke-linecap="round"/><circle cx="12" cy="5.4" r="1.15" fill="#0a0e17" stroke="#58a6ff"/></svg><div class="rocket-flame"></div></div>';
+    host.appendChild(wrap);
+
+    var dx = tx - sx;
+    var dy = ty - sy;
+    var x30 = sx + dx * 0.3, y30 = sy + dy * 0.12;
+    var midX = sx + dx * 0.5, midY = sy + dy * 0.34;
+    var x82 = sx + dx * 0.82, y82 = sy + dy * 0.9;
+    var dur = 3000;
+
+    var smokeTimer = setInterval(function(){
+      if (!document.body.contains(wrap)) { clearInterval(smokeTimer); return; }
+      var s = document.createElement('div');
+      s.className = 'rocket-smoke';
+      s.style.setProperty('--dx', (Math.random() * 30 - 15) + 'px');
+      wrap.appendChild(s);
+      setTimeout(function(){ if (s.parentNode) s.parentNode.removeChild(s); }, 1150);
+    }, 55);
+
+    wrap.animate([
+      { offset: 0,   transform: 'translate(' + sx + 'px,' + sy + 'px) rotate(26deg) scale(0.55)' },
+      { offset: 0.3, transform: 'translate(' + x30 + 'px,' + y30 + 'px) rotate(16deg) scale(0.85)' },
+      { offset: 0.55, transform: 'translate(' + midX + 'px,' + midY + 'px) rotate(4deg) scale(1.1)' },
+      { offset: 0.82, transform: 'translate(' + x82 + 'px,' + y82 + 'px) rotate(-8deg) scale(1)' },
+      { offset: 1,   transform: 'translate(' + tx + 'px,' + ty + 'px) rotate(-22deg) scale(0.92)' }
+    ], { duration: dur, easing: 'cubic-bezier(0.45, 0.05, 0.55, 0.95)', fill: 'forwards' }).finished.then(function(){
+      clearInterval(smokeTimer);
+      wrap.style.transform = 'translate(' + tx + 'px,' + ty + 'px) rotate(-22deg) scale(0.92)';
+      tab.classList.add('rocket-pop');
+      setTimeout(function(){ tab.classList.remove('rocket-pop'); }, 600);
+      var bc = document.getElementById('approval-count');
+      if (bc) {
+        bc.classList.remove('bump');
+        void bc.offsetWidth;
+        bc.classList.add('bump');
+        setTimeout(function(){ bc.classList.remove('bump'); }, 650);
+      }
+      var sparks = 12;
+      for (var i = 0; i < sparks; i++) {
+        var a = Math.PI * 2 * i / sparks;
+        var dist = 34 + Math.random() * 26;
+        var sp = document.createElement('div');
+        sp.className = 'rocket-spark';
+        sp.style.setProperty('--dx', Math.cos(a) * dist + 'px');
+        sp.style.setProperty('--dy', Math.sin(a) * dist + 'px');
+        sp.style.left = tx + 'px';
+        sp.style.top = ty + 'px';
+        document.body.appendChild(sp);
+        setTimeout(function(el){ if (el.parentNode) el.parentNode.removeChild(el); }.bind(null, sp), 950);
+      }
+      setTimeout(function(){ if (host.parentNode) host.parentNode.removeChild(host); }, 300);
+    });
+  }
+
+  if (!delayMs) { launch(); return; }
+  if (window.__healixBootDone) { setTimeout(launch, 500); return; }
+  var bootTimer = null;
+  function afterBoot() {
+    clearTimeout(bootTimer);
+    document.removeEventListener('healix-boot-end', afterBoot);
+    setTimeout(launch, 500);
+  }
+  document.addEventListener('healix-boot-end', afterBoot);
+  bootTimer = setTimeout(function(){
+    document.removeEventListener('healix-boot-end', afterBoot);
+    launch();
+  }, delayMs + 1500);
+}
 
 function renderApprovals(data) {
   var el = document.getElementById('approvals-list');
@@ -2965,6 +3181,19 @@ function renderApprovals(data) {
     if (activePending.length > 0) { countEl.textContent = activePending.length; countEl.style.display = ''; }
     else { countEl.style.display = 'none'; }
   }
+  var pendingIds = activePendingIds(allReqs);
+  var seen = loadSeenPendingIds();
+  var isNew = pendingIds.filter(function(id){ return seen.indexOf(id) === -1; });
+  var fireRocket = isNew.length > 0
+    && _selectedTab !== 'approvals'
+    && _canViewApprovals
+    && !document.hidden
+    && (!window.p4ReduceMotion || !p4ReduceMotion());
+  if (fireRocket) {
+    var firstLoginReveal = seen.length === 0 && pendingIds.length > 0;
+    fireApprovalRocket(firstLoginReveal ? 5000 : 0);
+  }
+  if (isNew.length > 0 && _canViewApprovals) saveSeenPendingIds(pendingIds);
   function renderCard(r) {
     var isDel = r.deleted;
     var cardCls = isDel ? 'approval-card removed' : 'approval-card '+r.status;
@@ -3294,25 +3523,31 @@ function checkUserPermissions(cb) {
       var ut = document.getElementById('menu-users-item');
       if (ut) ut.style.display = p.can_admin ? '' : 'none';
       var at = document.getElementById('approvals-tab');
+      var mat = document.getElementById('m-approvals-tab');
       if (at) {
         _canViewApprovals = p.can_view_approvals || false;
         at.style.display = _canViewApprovals ? '' : 'none';
+        if (mat) mat.style.display = _canViewApprovals ? '' : 'none';
       }
       if (!_canViewApprovals && _selectedTab === 'approvals') {
         switchTab('overview');
       }
       var pt = document.getElementById('pods-tab');
+      var mpt = document.getElementById('m-pods-tab');
       if (pt) {
         _canViewPods = p.can_view_pods || false;
         pt.style.display = _canViewPods ? '' : 'none';
+        if (mpt) mpt.style.display = _canViewPods ? '' : 'none';
       }
       if (!_canViewPods && _selectedTab === 'pods') {
         switchTab('overview');
       }
       var ct = document.getElementById('containers-tab');
+      var mct = document.getElementById('m-containers-tab');
       if (ct) {
         _canViewContainers = p.can_view_containers || false;
         ct.style.display = _canViewContainers ? '' : 'none';
+        if (mct) mct.style.display = _canViewContainers ? '' : 'none';
       }
       if (!_canViewContainers && _selectedTab === 'containers') {
         switchTab('overview');
@@ -3667,10 +3902,10 @@ function p4NoHover() { return window.matchMedia && window.matchMedia('(hover: no
   .chat-msg .chat-provider { display: block; margin-top: 6px; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.6px; }
   .chat-typing { align-self: flex-start; display: none; gap: 4px; padding: 10px 14px; background: var(--box-bg); border: 1px solid var(--border-subtle); border-radius: 12px; border-bottom-left-radius: 4px; }
   .chat-typing.show { display: flex; }
-  .chat-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--text2); animation: chatBlink 1.2s infinite; }
-  .chat-typing span:nth-child(2) { animation-delay: 0.2s; }
-  .chat-typing span:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes chatBlink { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.9); } 40% { opacity: 1; transform: scale(1); } }
+  .chat-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--text2); animation: chatBounce 0.9s ease-in-out infinite; }
+  .chat-typing span:nth-child(2) { animation-delay: 0.15s; }
+  .chat-typing span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes chatBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-5px); opacity: 1; } }
   .chat-foot { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border-subtle); background: var(--header-bg); }
   .chat-foot input {
     flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-subtle);
@@ -3778,6 +4013,10 @@ function setTyping(on) {
   var t = document.getElementById('chatTyping');
   t.classList.toggle('show', on);
   document.getElementById('chatSendBtn').disabled = on;
+  if (on) {
+    var body = document.getElementById('chatBody');
+    if (body) body.scrollTop = body.scrollHeight;
+  }
 }
 function sendChat() {
   var input = document.getElementById('chatInput');
