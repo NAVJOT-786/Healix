@@ -1416,9 +1416,11 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   /* ── Bottom Sheet ────────────────────────────────── */
   .sp-backdrop { position: fixed; inset: 0; background: var(--backdrop-bg); z-index: 300; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; backdrop-filter: blur(4px); }
   .sp-backdrop.open { opacity: 1; pointer-events: auto; }
-  .sp { position: fixed; bottom: 0; left: 0; right: 0; height: 55vh; max-width: 100%; background: var(--sp-bg); backdrop-filter: blur(20px); border-top: 1px solid var(--glass-border); z-index: 310; transform: translateY(100%); transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; border-radius: 16px 16px 0 0; }
+  .sp { position: fixed; bottom: 0; left: 0; right: 0; height: 55vh; min-height: 30vh; max-height: 90vh; max-width: 100%; background: var(--sp-bg); backdrop-filter: blur(20px); border-top: 1px solid var(--glass-border); z-index: 310; transform: translateY(100%); transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; border-radius: 16px 16px 0 0; }
   .sp.open { transform: translateY(0); }
-  .sp-handle { width: 40px; height: 4px; background: var(--text3); border-radius: 2px; margin: 10px auto 0; flex-shrink: 0; }
+  .sp.dragging { transition: none; user-select: none; }
+  .sp-handle { width: 44px; height: 18px; margin: 6px auto 0; display: flex; align-items: center; justify-content: center; cursor: row-resize; flex-shrink: 0; touch-action: none; }
+  .sp-handle::before { content: ''; width: 40px; height: 4px; background: var(--border); border-radius: 2px; }
   .sp-head { display: flex; align-items: center; gap: 12px; padding: 12px 24px 14px; border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
   .sp-close { background: none; border: 1px solid var(--glass-border); color: var(--text2); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; transition: all 0.2s; flex-shrink: 0; }
   .sp-close:hover { border-color: var(--red); color: var(--red); background: rgba(248,81,73,0.08); }
@@ -1470,7 +1472,6 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .sp-box.root-cause { border-left: 3px solid var(--red); }
   .sp-box.recommendation { border-left: 3px solid var(--blue); }
   .sp-box.cost { border-left: 3px solid var(--purple); }
-  .sp.open .sp-handle { background: var(--blue); box-shadow: 0 0 8px rgba(88,166,255,0.4); transition: all 0.3s ease 0.1s; }
 
   /* ── Toast Notifications ───────────────────────── */
   #toasts { position: fixed; top: 72px; right: 24px; z-index: 500; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
@@ -2419,6 +2420,8 @@ function showToast(name,status,route) {
 
 function openSidePanel(rec) {
   _spRecId=rec.id;
+  var _spSaved=parseFloat(localStorage.getItem('healix_sp_height'))||55;
+  document.getElementById('side-panel').style.height=spHeightPx(_spSaved)+'px';
   document.getElementById('sp-name').textContent=rec.name;
   var spRoute = rec.deleted ? 'removed' : rec.route;
   document.getElementById('sp-badges').innerHTML=platformBadge(rec.platform)+statusBadge(rec.status)+routeBadge(spRoute);
@@ -2442,6 +2445,54 @@ function openSidePanel(rec) {
 }
 function closeSidePanel(){_spRecId=null;document.getElementById('sp-backdrop').classList.remove('open');document.getElementById('side-panel').classList.remove('open');}
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSidePanel();});
+
+// ── Resizable Bottom Sheet ──────────────────────────────────────
+var _spMinH=30,_spMaxH=90;
+function spHeightPx(ratio){var v=Math.max(_spMinH,Math.min(_spMaxH,ratio))*window.innerHeight/100;return v;}
+(function(){
+  var panel=document.getElementById('side-panel'),handle=document.querySelector('.sp-handle');
+  var drag=null;
+  function ptrY(ev){return ev.clientY!=null?ev.clientY:(ev.touches&&ev.touches[0]?ev.touches[0].clientY:0);}
+  function onDown(ev){
+    if(!panel.classList.contains('open'))return;
+    drag={y:ptrY(ev),h:panel.getBoundingClientRect().height};
+    panel.classList.add('dragging');
+    if(ev.cancelable)ev.preventDefault();
+  }
+  function onMove(ev){
+    if(!drag)return;
+    var h=drag.h+(drag.y-ptrY(ev));
+    var maxH=window.innerHeight*_spMaxH/100;
+    if(h>maxH)h=maxH;
+    if(h<0)h=0;
+    panel.style.height=Math.round(h)+'px';
+    if(ev.cancelable)ev.preventDefault();
+  }
+  function onUp(){
+    if(!drag)return;
+    var h=parseFloat(panel.style.height)||window.innerHeight*0.55;
+    panel.classList.remove('dragging');
+    drag=null;
+    if(h<window.innerHeight*_spMinH/100){closeSidePanel();return;}
+    localStorage.setItem('healix_sp_height',Math.round(h/window.innerHeight*1000)/10);
+  }
+  handle.addEventListener('mousedown',function(ev){
+    onDown(ev);
+    function mv(e){onMove(e);} function up(){document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);onUp();}
+    document.addEventListener('mousemove',mv);
+    document.addEventListener('mouseup',up);
+  });
+  handle.addEventListener('touchstart',function(ev){onDown(ev);},{passive:false});
+  document.addEventListener('touchmove',function(ev){onMove(ev);},{passive:false});
+  document.addEventListener('touchend',onUp);
+  handle.addEventListener('dblclick',function(){
+    var maxH=window.innerHeight*_spMaxH/100;
+    var cur=parseFloat(panel.style.height)||window.innerHeight*0.55;
+    var target=(cur>=maxH-2)?window.innerHeight*0.55:maxH;
+    panel.style.height=Math.round(target)+'px';
+    localStorage.setItem('healix_sp_height',Math.round(target/window.innerHeight*1000)/10);
+  });
+})();
 function scrollLogsToBottom(){var w=document.getElementById('sp-log-wrap');w.scrollTop=w.scrollHeight;document.getElementById('log-indicator').classList.remove('visible');}
 
 function fmtUptime(s){if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+(s%60)+'s';return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';}
