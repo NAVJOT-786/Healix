@@ -2099,7 +2099,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="panel full-panel">
         <div class="panel-title">Download Reports</div>
         <div class="report-block">
-          <div class="report-desc">Generate a PDF summary of incidents, heals, failures, platforms, actions and affected resources for a selected period.</div>
+          <div class="report-desc">Generate a PDF report of incidents, heals, failures, environment health, LLM/cost summary, detailed incident logs and affected resources for a selected period.</div>
           <div class="report-range-row">
             <span class="report-range-label">Period</span>
             <div class="metrics-range-btns">
@@ -2108,6 +2108,12 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
               <button class="range-btn" data-range="7" onclick="setReportRange(this,7)">7d</button>
               <button class="range-btn" data-range="14" onclick="setReportRange(this,14)">14d</button>
             </div>
+          </div>
+          <div class="report-range-row">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);cursor:pointer">
+              <input type="checkbox" id="report-detail" checked style="accent-color:var(--blue);width:15px;height:15px;cursor:pointer">
+              Include detailed incident details &amp; logs
+            </label>
           </div>
           <div class="report-actions">
             <button class="modal-btn primary" id="report-download-btn" onclick="downloadReport(7)">
@@ -3775,8 +3781,9 @@ document.addEventListener('click', function(e) {
 });
 
 function downloadReport(days) {
+  var detail = document.getElementById('report-detail') && document.getElementById('report-detail').checked ? 1 : 0;
   var a = document.createElement('a');
-  a.href = '/api/report?days=' + days;
+  a.href = '/api/report?days=' + days + '&detail=' + detail;
   a.download = 'healix-report-' + days + 'd.pdf';
   document.body.appendChild(a);
   a.click();
@@ -4214,7 +4221,7 @@ def _vgrad(pdf, x, y, w, h, c1, c2, radius=0):
         pdf.rect(x, y + i * sh, w, sh + 0.05, "F", round_corners=rc, corner_radius=radius)
 
 
-def generate_report(days: int = 7) -> bytes:
+def generate_report(days: int = 7, detail: bool = True) -> bytes:
     from io import BytesIO
     from fpdf import FPDF
 
@@ -4235,7 +4242,20 @@ def generate_report(days: int = 7) -> bytes:
     now = time.time()
 
     class _ReportPDF(FPDF):
+        def header(self) -> None:
+            if self.page_no() <= 1:
+                return
+            self.set_font("Helvetica", "B", 42)
+            self.set_text_color(240, 243, 248)
+            with self.rotation(45, 105, 148.5):
+                for i in range(-2, 4):
+                    self.text(86, 20 + i * 90, "HEALIX")
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(INK[0], INK[1], INK[2])
+
         def footer(self) -> None:
+            if self.page_no() <= 1:
+                return
             self.set_y(-16)
             _hgrad(self, 0, self.get_y() - 1, 210, 1.2, HDR_A, HDR_C)
             self.set_y(-14)
@@ -4269,9 +4289,69 @@ def generate_report(days: int = 7) -> bytes:
     resources = dict(sorted(resources.items(), key=lambda x: -x[1])[:8])
     mc = metrics.to_dict()
 
+    def _sum_cost(recs):
+        total = 0.0
+        for r in recs:
+            cd = r.get("cost_data") or ""
+            for m in re.finditer(r"\$\s*([\d.]+)", cd):
+                try:
+                    total += float(m.group(1))
+                except ValueError:
+                    pass
+        return total
+
+    total_cost = _sum_cost(recs)
+    approvals_total = sum(
+        1 for r in recs
+        if r.get("route") == "needs_approval" or "APPROVAL" in (r.get("action_result") or "").upper()
+    )
+    svc = service_status.to_dict()
+
     pdf = _ReportPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.set_margins(12, 12, 12)
+
+    # ── Cover page ────────────────────────────────────────────
+    pdf.add_page()
+    _vgrad(pdf, 0, 0, 210, 297, HDR_A, HDR_C)
+    cx, cy, s = 105, 80, 5.0
+    _logo = [(15.5, 14.5), (17, 14.5), (18.5, 8.5), (20, 19.5), (21.5, 14.5), (24, 14.5)]
+    _pts = [(cx + (px - 19.75) * s, cy + (py - 14) * s) for px, py in _logo]
+    pdf.set_draw_color(*WHITE)
+    pdf.set_line_width(2.4)
+    for i in range(len(_pts) - 1):
+        pdf.line(_pts[i][0], _pts[i][1], _pts[i + 1][0], _pts[i + 1][1])
+    pdf.set_font("Helvetica", "B", 42)
+    pdf.set_text_color(*WHITE)
+    pdf.set_xy(0, 122)
+    pdf.cell(210, 18, "Healix", align="C")
+    pdf.set_font("Helvetica", "", 14)
+    pdf.set_text_color(199, 227, 255)
+    pdf.set_xy(0, 143)
+    pdf.cell(210, 8, "AI-Powered Self-Healing Platform", align="C")
+    pdf.set_draw_color(255, 255, 255)
+    pdf.set_line_width(0.6)
+    pdf.line(65, 158, 145, 158)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(199, 227, 255)
+    pdf.set_xy(0, 166)
+    pdf.cell(210, 5, "REPORT PERIOD", align="C")
+    pdf.set_font("Helvetica", "", 11.5)
+    pdf.set_text_color(*WHITE)
+    pdf.set_xy(0, 174)
+    pdf.cell(210, 7, f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(start_ts))}  ->  {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))}", align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(0, 184)
+    pdf.cell(210, 6, f"Generated {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))}  |  Report ID: HLX-{time.strftime('%Y%m%d', time.gmtime(now))}-{days}d", align="C")
+    pdf.set_font("Helvetica", "", 10.5)
+    pdf.set_text_color(219, 234, 254)
+    pdf.set_xy(0, 226)
+    pdf.cell(210, 6, "Autonomous detection, diagnosis & healing for Kubernetes and Docker", align="C")
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(0, 262)
+    pdf.cell(210, 6, "PREPARED BY THE HEALIX AUTONOMOUS HEALING AGENT", align="C")
+    _hgrad(pdf, 0, 288, 210, 6, HDR_B, HDR_C)
     pdf.add_page()
 
     def _space(y, need):
@@ -4485,6 +4565,236 @@ def generate_report(days: int = 7) -> bytes:
             y += 5.6
         y += 6
 
+    # ── Environment & Service Health ───────────────────────────
+    y = _space(y, 95)
+    y = _section_title(y, "Environment & Service Health", GREEN, BLUE)
+    svc_rows = [
+        ("Kubernetes", svc.get("k8s", {}), (37, 99, 235)),
+        ("Docker", svc.get("docker", {}), (14, 165, 233)),
+        ("Loki", svc.get("loki", {}), (139, 92, 246)),
+        ("Prometheus", svc.get("prometheus", {}), (249, 115, 22)),
+        ("n8n", svc.get("n8n", {}), (236, 72, 153)),
+        ("Email", svc.get("email", {}), (16, 185, 129)),
+    ]
+    pdf.set_fill_color(224, 242, 254)
+    pdf.rect(12, y, 186, 7, "F", round_corners=True, corner_radius=2)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(30, 58, 138)
+    pdf.set_xy(14, y + 1.6)
+    pdf.cell(70, 4, "SERVICE")
+    pdf.cell(30, 4, "STATUS")
+    pdf.cell(84, 4, "DETAIL")
+    y += 9
+    for _nm, _st, _col in svc_rows:
+        if y + 7 > 262:
+            pdf.add_page()
+            y = 22
+        _cfg = bool(_st.get("configured", False))
+        _con = bool(_st.get("connected", False))
+        _dtl = _clean_report_text(_st.get("detail", ""))[:60] or "-"
+        if not _cfg:
+            _lab, _lcol, _bg = "DISABLED", MUTED, TRACK
+        elif _con:
+            _lab, _lcol, _bg = "OK", GREEN, (220, 252, 231)
+        else:
+            _lab, _lcol, _bg = "FAIL", RED, (254, 226, 226)
+        pdf.set_fill_color(*WHITE)
+        pdf.rect(12, y, 186, 6.6, "F", round_corners=True, corner_radius=1.5)
+        pdf.set_draw_color(*BORDER)
+        pdf.set_line_width(0.2)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(14, y + 1.3)
+        pdf.cell(70, 4.4, _nm)
+        pw = 15
+        px = 78 + (30 - pw) / 2
+        pdf.set_fill_color(*_bg)
+        pdf.rect(px, y + 1.1, pw, 4.4, "F", round_corners=True, corner_radius=2.2)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.set_text_color(*_lcol)
+        pdf.set_xy(px, y + 1.5)
+        pdf.cell(pw, 3.6, _lab, align="C")
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(112, y + 1.5)
+        pdf.cell(84, 4, _dtl)
+        y += 7
+    _mode = "REPORT-ONLY" if REPORT_ONLY else ("DRY-RUN" if DRY_RUN else "LIVE")
+    _watch = "all namespaces" if WATCH_ALL_NAMESPACES else ", ".join(WATCH_NAMESPACES)
+    _cfg_lines = [
+        f"Agent mode: {_mode}   |   Watch: {_watch}",
+        f"Provider chain: {', '.join(DIAGNOSIS_PROVIDER_CHAIN)}   |   Max restarts: {MAX_RESTARTS}",
+        f"Uptime: {mc.get('uptime_seconds', 0) // 3600}h  |  Total heals: {mc.get('total_heals', 0)}  |  Approvals: {approvals_total}",
+    ]
+    y += 2
+    pdf.set_font("Helvetica", "", 7.5)
+    pdf.set_text_color(*MUTED)
+    for _ln in _cfg_lines:
+        if y > 258:
+            pdf.add_page()
+            y = 22
+        pdf.set_xy(12, y)
+        pdf.cell(186, 4, _clean_report_text(_ln))
+        y += 4
+    y += 2
+
+    # ── LLM & Cost Summary ─────────────────────────────────────
+    provs = mc.get("providers", {})
+    y = _space(y, 45 + len(provs) * 8)
+    y = _section_title(y, "LLM & Cost Summary", VIOLET, BLUE)
+    if provs:
+        pdf.set_fill_color(237, 233, 254)
+        pdf.rect(12, y, 186, 7, "F", round_corners=True, corner_radius=2)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(91, 33, 182)
+        pdf.set_xy(14, y + 1.6)
+        pdf.cell(40, 4, "PROVIDER")
+        pdf.cell(30, 4, "CALLS")
+        pdf.cell(30, 4, "ERRORS")
+        pdf.cell(34, 4, "AVG LAT (s)")
+        pdf.cell(40, 4, "SUCCESS")
+        y += 9
+        for _pname, _pd in provs.items():
+            if y + 7 > 262:
+                pdf.add_page()
+                y = 22
+            _sr = _pd.get("success_rate", 0)
+            pdf.set_fill_color(*WHITE)
+            pdf.rect(12, y, 186, 6.6, "F", round_corners=True, corner_radius=1.5)
+            pdf.set_font("Helvetica", "", 8.5)
+            pdf.set_text_color(*INK)
+            pdf.set_xy(14, y + 1.3)
+            pdf.cell(40, 4.4, _clean_report_text(str(_pname))[:22])
+            pdf.cell(30, 4.4, str(_pd.get("calls", 0)))
+            pdf.cell(30, 4.4, str(_pd.get("errors", 0)))
+            pdf.cell(34, 4.4, f"{_pd.get('avg_latency', 0):.2f}")
+            _scol = GREEN if _sr >= 90 else (ORANGE if _sr >= 60 else RED)
+            pdf.set_text_color(*_scol)
+            pdf.cell(40, 4.4, f"{_sr:.0f}%")
+            y += 7
+        y += 3
+    else:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(12, y)
+        pdf.cell(186, 6, "No LLM activity recorded in this period.")
+        y += 10
+    if total_cost > 0:
+        pdf.set_fill_color(254, 243, 199)
+        pdf.rect(12, y, 186, 8, "F", round_corners=True, corner_radius=3)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(18, y + 2)
+        pdf.cell(180, 4.5, f"Estimated compute cost impact (period): ${total_cost:.4f}")
+        y += 12
+    else:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*MUTED)
+        pdf.set_xy(12, y)
+        pdf.cell(186, 6, "No cost impact data for this period.")
+        y += 10
+
+    # ── Incident Details ───────────────────────────────────────
+    if detail and recs:
+        det = recs[:25]
+
+        def _blk(label, text, color):
+            nonlocal y
+            if y > 248:
+                pdf.add_page()
+                y = pdf.get_y() + 2
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.set_text_color(*color)
+            pdf.set_xy(12, y)
+            pdf.cell(186, 4.2, label)
+            pdf.set_font("Helvetica", "", 8.5)
+            pdf.set_text_color(*INK)
+            pdf.set_xy(12, y + 4.2)
+            pdf.multi_cell(186, 4.3, _clean_report_text(text), align="L")
+            y = pdf.get_y() + 2
+
+        def _logs(rec):
+            nonlocal y
+            if y > 240:
+                pdf.add_page()
+                y = pdf.get_y() + 2
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.set_text_color(30, 58, 138)
+            pdf.set_xy(12, y)
+            pdf.cell(186, 4.2, "DOCKER / K8S LOGS")
+            y += 4.4
+            logtxt = _clean_report_text((rec.get("logs") or "").strip() or "(no logs available)")
+            logtxt = logtxt[:2500]
+            pdf.set_fill_color(246, 248, 252)
+            pdf.set_font("Courier", "", 7)
+            pdf.set_text_color(55, 65, 81)
+            pdf.set_xy(12, y)
+            pdf.multi_cell(186, 3.6, logtxt, align="L", fill=True)
+            y = pdf.get_y() + 3
+
+        def _status_tag(r):
+            if "APPROVAL" in (r.get("action_result") or "").upper():
+                return "APPROVAL", VIOLET
+            if r.get("success"):
+                return "HEALED", GREEN
+            return "FAILED", RED
+
+        y = _space(y, 30)
+        y = _section_title(y, "Incident Details", RED, VIOLET)
+        for _idx, r in enumerate(det):
+            if y > 240:
+                pdf.add_page()
+                y = pdf.get_y()
+            if y < 30:
+                y = 40
+            _hgrad(pdf, 12, y, 5, 7, RED, VIOLET, radius=1.5)
+            pdf.set_xy(21, y + 0.4)
+            pdf.set_font("Helvetica", "B", 10.5)
+            pdf.set_text_color(*INK)
+            pdf.cell(120, 7, _clean_report_text(f"#{_idx + 1}  {r.get('name', '')}")[:58])
+            _stag, _scol = _status_tag(r)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(*_scol)
+            pdf.set_xy(150, y + 0.6)
+            pdf.cell(48, 5, f"{_clean_report_text(r.get('platform', ''))[:8].upper()}  {_stag}", align="R")
+            y += 10
+            _fields = [
+                ("Namespace", r.get("namespace", "") or "-"),
+                ("Deployment", r.get("deployment", "") or "-"),
+                ("Location", r.get("location", "") or "-"),
+                ("Restarts", str(r.get("restarts", "0"))),
+                ("Route", r.get("route", "") or "-"),
+                ("LLM", f"{r.get('llm_model', '')} ({r.get('llm_latency', '')}s)"),
+                ("Dev Issue", "Yes" if r.get("is_developer_issue") else "No"),
+                ("Result", r.get("action_result", "") or "-"),
+            ]
+            for i in range(0, len(_fields), 2):
+                if y > 250:
+                    pdf.add_page()
+                    y = 22
+                for _fx, (_fl, _fv) in [(12, _fields[i]), (106, _fields[i + 1])]:
+                    pdf.set_font("Helvetica", "B", 6.5)
+                    pdf.set_text_color(*MUTED)
+                    pdf.set_xy(_fx, y)
+                    pdf.cell(88 if _fx == 12 else 92, 3.4, _clean_report_text(_fl))
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(*INK)
+                    pdf.set_xy(_fx, y + 3.4)
+                    pdf.cell(88 if _fx == 12 else 92, 4.2, _clean_report_text(str(_fv))[:42])
+                y += 8
+            y += 0.5
+            _blk("Summary", r.get("summary", "") or "—", (37, 99, 235))
+            _blk("Root Cause", r.get("root_cause", "") or "—", (239, 68, 68))
+            _blk("Recommendation", r.get("recommendation", "") or "—", (139, 92, 246))
+            _cd = r.get("cost_data") or ""
+            if _cd and _cd != "Cost data not available":
+                _blk("Cost Impact", _cd, (249, 115, 22))
+            _logs(r)
+            pdf.set_draw_color(*BORDER)
+            pdf.set_line_width(0.3)
+            pdf.line(12, y - 1, 198, y - 1)
+            y += 3
+
     # ── Incident table ─────────────────────────────────────────
     y = _space(y, 40)
     y = _section_title(y, "Recent Incidents", BLUE, VIOLET)
@@ -4506,7 +4816,7 @@ def generate_report(days: int = 7) -> bytes:
     if recs:
         y = _table_head(y)
         last_page = pdf.page_no()
-        for idx, r in enumerate(recs[:40]):
+        for idx, r in enumerate(recs[:20]):
             row_y = pdf.get_y()
             if pdf.page_no() != last_page:
                 last_page = pdf.page_no()
@@ -4815,7 +5125,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 qp = urllib.parse.parse_qs(qs)
                 days = int((qp.get("days") or ["7"])[0] or 7)
                 days = min(max(days, 1), 30)
-                pdf_bytes = generate_report(days)
+                detail = str((qp.get("detail") or ["1"])[0]).lower() not in ("0", "false", "no", "off")
+                pdf_bytes = generate_report(days, detail=detail)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
                 self.send_header("Content-Disposition", f'attachment; filename="healix-report-{days}d-{time.strftime("%Y%m%d")}.pdf"')
