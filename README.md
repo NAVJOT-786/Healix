@@ -338,7 +338,7 @@ Config: `CHAT_ENABLED`, `CHAT_TIMEOUT_SEC`, `CHAT_MAX_TURNS`, `CHAT_PROVIDER_CHA
 
 | Priority | Provider | Model | Free Tier | Best For |
 |---|---|---|---|---|
-| 1 | **Groq** | llama-3.3-70b-versatile | ~1,000 req/day | Fastest inference |
+| 1 | **Groq** | openai/gpt-oss-120b | ~1,000 req/day | Fastest inference |
 | 2 | **Ollama** | qwen2.5:7b | Unlimited | Primary offline diagnosis |
 | 3 | **Cerebras** | qwen3-235b | ~1M tokens/day | 1M context window |
 | 4 | **Gemini** | gemini-2.5-flash | ~1,500 req/day | Multimodal support |
@@ -385,7 +385,7 @@ DIAGNOSIS_PROVIDER_CHAIN=groq,gemini    # Try only Groq then Gemini
 | `OLLAMA_ENABLED` | `false` | Use Ollama as primary |
 | `OLLAMA_MODEL` | `qwen2.5:14b` | Ollama model |
 | `GROQ_API_KEY` | — | Groq API key |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model |
 | `CEREBRAS_API_KEY` | — | Cerebras API key |
 | `CEREBRAS_MODEL` | `qwen3-235b` | Cerebras model |
 | `MISTRAL_API_KEY` | — | Mistral API key |
