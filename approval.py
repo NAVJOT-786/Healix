@@ -259,7 +259,10 @@ def _process_approved(
 
             log.info("Executing approved action %s for %s", action, req.target.get("name"))
 
-            if platform == "k8s" and k8s_context:
+            if platform == "dr":
+                import dr as dr_module
+                action_result = dr_module.execute_approved(params)
+            elif platform == "k8s" and k8s_context:
                 action_result = execute_fn(action, params, k8s_context["v1"], k8s_context["apps_v1"])
             elif platform == "docker" and docker_context:
                 action_result = execute_fn(action, params, docker_context.get("container"))

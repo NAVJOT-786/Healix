@@ -22,6 +22,7 @@ import smtplib
 import threading
 import urllib.parse
 import calendar
+from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Any
@@ -39,9 +40,14 @@ from config import (
     APPROVAL_DASHBOARD_URL,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_ALLOWED_DOMAINS, GOOGLE_REDIRECT_URI,
     GEMINI_API_KEY, CHAT_ENABLED, CHAT_TIMEOUT_SEC, CHAT_MAX_TURNS, CHAT_PROVIDER_CHAIN,
+    DR_ENABLED, DR_PRIMARY_CONTEXT, DR_STANDBY_CONTEXT,
 )
 from storage import StorageBackend
-from notifications import send_welcome_email, send_password_reset_email
+from notifications import (
+    send_welcome_email, send_password_reset_email,
+    send_approval_email, notify_n8n,
+)
+import dr as dr_module
 
 log = logging.getLogger("observability")
 
@@ -309,6 +315,8 @@ class ServiceStatus:
         self._lock = threading.Lock()
         self._status: dict[str, dict[str, Any]] = {
             "k8s":        {"configured": bool(ENABLE_K8S),        "connected": False, "detail": ""},
+            "k8s_dr_primary": {"configured": bool(DR_ENABLED and DR_PRIMARY_CONTEXT), "connected": False, "detail": ""},
+            "k8s_dr_standby": {"configured": bool(DR_ENABLED and DR_STANDBY_CONTEXT), "connected": False, "detail": ""},
             "docker":     {"configured": bool(ENABLE_DOCKER),     "connected": False, "detail": ""},
             "loki":       {"configured": bool(LOKI_URL),          "connected": False, "detail": ""},
             "prometheus": {"configured": bool(PROMETHEUS_URL),    "connected": False, "detail": ""},
@@ -1581,6 +1589,8 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     .stats { grid-template-columns: repeat(2, 1fr); }
     .stat-card:nth-child(5) { grid-column: span 2; }
     .status-grid { grid-template-columns: repeat(2, 1fr); }
+    .dr-cluster-grid { grid-template-columns: 1fr; }
+    .dr-stats-row { grid-template-columns: repeat(2, 1fr); }
     .hdr-tabs { display: none; }
     .menu-btn { display: flex; }
     .hdr-sep { display: none; }
@@ -1633,6 +1643,46 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .report-range-label { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
   .report-actions { display: flex; }
   .report-actions .modal-btn { flex: 0 0 auto; padding: 11px 22px; }
+
+  /* ── Cloud Disaster Recovery ──────────────────────────────────── */
+  .dr-disabled { background: var(--glass-bg); border: 1px dashed var(--border); border-radius: 12px; padding: 16px 18px; color: var(--text2); font-size: 13px; }
+  .dr-disabled code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 12px; color: var(--text); }
+  .dr-banner { display: flex; align-items: center; gap: 14px; background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.45); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+  .dr-banner-icon { width: 30px; height: 30px; border-radius: 50%; background: var(--red); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+  .dr-banner-text { flex: 1; font-size: 14px; }
+  .dr-banner-detail { font-size: 12px; color: var(--text2); margin-top: 3px; }
+  .dr-cluster-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .dr-cluster-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 14px 16px; }
+  .dr-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .dr-card-title { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.6px; }
+  .dr-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text3); }
+  .dr-dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dr-dot.off { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .dr-card-ctx { font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+  .dr-card-detail { font-size: 12px; color: var(--text2); word-break: break-all; }
+  .dr-stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .dr-stat { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 12px 14px; text-align: center; }
+  .dr-stat-val { font-size: 17px; font-weight: 700; }
+  .dr-stat-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 3px; }
+  .dr-actions { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; flex-wrap: wrap; }
+  .dr-actions .modal-btn { flex: 0 0 auto; padding: 10px 20px; }
+  .dr-hint { font-size: 12px; color: var(--text2); }
+  .dr-table-wrap { overflow-x: auto; }
+  .dr-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .dr-table th { text-align: left; padding: 9px 10px; color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+  .dr-table td { padding: 10px; border-bottom: 1px solid var(--border); }
+  .dr-table tbody tr:hover td { background: var(--surface); }
+  .dr-empty { text-align: center; color: var(--text2); font-style: italic; padding: 22px !important; }
+  .dr-restore-btn { padding: 6px 14px; font-size: 12px; font-weight: 600; border: 1px solid var(--blue); background: transparent; color: var(--blue); border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+  .dr-restore-btn:hover { background: var(--blue); color: #fff; }
+  .dr-target-opt { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+  .dr-target-opt:hover { border-color: var(--blue); }
+  .dr-target-opt input { accent-color: var(--blue); }
+  .dr-target-opt small { color: var(--text2); margin-left: auto; }
+  .dr-restore-note { font-size: 12px; color: var(--text2); background: var(--surface); border-radius: 8px; padding: 10px 12px; line-height: 1.5; margin-top: 10px; }
+  .dr-pill { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+  .dr-pill.ok { background: rgba(63,185,80,0.15); color: var(--green); }
+  .dr-pill.bad { background: rgba(248,81,73,0.15); color: var(--red); }
 
   /* ── Boot Splash (crack -> join logo) ───────────── */
   #boot-splash { position: fixed; inset: 0; z-index: 9998; background: #0a0e17; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; opacity: 1; transition: opacity 0.6s ease; will-change: opacity; }
@@ -1811,6 +1861,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <button class="tab-btn" data-tab="metrics">Metrics</button>
 <button class="tab-btn" data-tab="approvals" id="approvals-tab">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
 <button class="tab-btn" data-tab="reports">Reports</button>
+<button class="tab-btn" data-tab="dr" id="dr-tab">Disaster Recovery</button>
     </nav>
     <div class="hdr-user-menu" id="hdr-user-menu">
       <button class="hdr-user-btn" onclick="toggleUserMenu(event)" title="Account">
@@ -1887,6 +1938,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     <button class="tab-btn mobile-tab" data-tab="metrics">Metrics</button>
     <button class="tab-btn mobile-tab" data-tab="approvals" id="m-approvals-tab">Approvals</button>
     <button class="tab-btn mobile-tab" data-tab="reports">Reports</button>
+    <button class="tab-btn mobile-tab" data-tab="dr" id="m-dr-tab">Disaster Recovery</button>
   </nav>
 </aside>
 
@@ -2125,6 +2177,64 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="tab-panel" id="panel-dr">
+      <div class="panel full-panel">
+        <div class="panel-title">Cloud Disaster Recovery</div>
+        <div id="dr-disabled-note" class="dr-disabled" style="display:none">Disaster recovery is disabled. Set <code>DR_ENABLED=true</code> in .env to activate cluster snapshots, disaster detection and approval-gated restores.</div>
+        <div id="dr-disaster-banner" class="dr-banner" style="display:none">
+          <span class="dr-banner-icon">!</span>
+          <div class="dr-banner-text">
+            <strong>Disaster detected — primary cluster unreachable</strong>
+            <div id="dr-disaster-detail" class="dr-banner-detail"></div>
+          </div>
+          <button class="modal-btn primary" onclick="loadDR()">Refresh</button>
+        </div>
+        <div class="dr-cluster-grid" id="dr-cluster-grid">
+          <div class="dr-cluster-card" id="dr-card-primary">
+            <div class="dr-card-head"><span class="dr-card-title">Primary cluster</span><span class="dr-dot" id="dr-dot-primary"></span></div>
+            <div class="dr-card-ctx" id="dr-ctx-primary">&mdash;</div>
+            <div class="dr-card-detail" id="dr-detail-primary">not probed yet</div>
+          </div>
+          <div class="dr-cluster-card" id="dr-card-standby">
+            <div class="dr-card-head"><span class="dr-card-title">Standby / DR cluster</span><span class="dr-dot" id="dr-dot-standby"></span></div>
+            <div class="dr-card-ctx" id="dr-ctx-standby">&mdash;</div>
+            <div class="dr-card-detail" id="dr-detail-standby">not probed yet</div>
+          </div>
+        </div>
+        <div class="dr-stats-row">
+          <div class="dr-stat"><div class="dr-stat-val" id="dr-stat-count">0</div><div class="dr-stat-label">Snapshots</div></div>
+          <div class="dr-stat"><div class="dr-stat-val" id="dr-stat-last">&mdash;</div><div class="dr-stat-label">Last backup</div></div>
+          <div class="dr-stat"><div class="dr-stat-val" id="dr-stat-interval">&mdash;</div><div class="dr-stat-label">Auto-backup</div></div>
+          <div class="dr-stat"><div class="dr-stat-val" id="dr-stat-mode">&mdash;</div><div class="dr-stat-label">Mode</div></div>
+        </div>
+        <div class="dr-actions">
+          <button class="modal-btn primary" id="dr-backup-btn" onclick="drBackupNow()">Take snapshot now</button>
+          <span class="dr-hint" id="dr-namespaces"></span>
+        </div>
+        <div class="panel-title" style="margin-top:20px">Snapshot history</div>
+        <div class="dr-table-wrap">
+          <table class="dr-table">
+            <thead><tr><th>Captured</th><th>Source</th><th>Namespaces</th><th>Resources</th><th>Size</th><th>By</th><th></th></tr></thead>
+            <tbody id="dr-backups-body"><tr><td colspan="7" class="dr-empty">Loading&hellip;</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal" id="dr-restore-modal">
+        <div class="modal-content" style="max-width:460px">
+          <div class="modal-title">Restore snapshot</div>
+          <div class="modal-msg" id="dr-restore-msg" style="display:none"></div>
+          <p style="font-size:13px;color:var(--text2);margin:6px 0">Snapshot <strong id="dr-restore-id">&mdash;</strong> &rarr; choose target cluster:</p>
+          <label class="dr-target-opt"><input type="radio" name="dr-target" value="primary" checked> <span>Primary</span> <small id="dr-restore-ctx-p"></small></label>
+          <label class="dr-target-opt"><input type="radio" name="dr-target" value="standby"> <span>Standby (DR)</span> <small id="dr-restore-ctx-s"></small></label>
+          <p class="dr-restore-note">Restores are approval-gated: an approval request is created and you approve it from the Approvals tab (or by email).</p>
+          <div class="report-actions" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
+            <button class="modal-btn" onclick="closeDrRestoreModal()">Cancel</button>
+            <button class="modal-btn primary" id="dr-restore-confirm-btn" onclick="confirmDrRestore()">Request restore</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </main>
 
@@ -2137,15 +2247,16 @@ var CONFIG = __CONFIG__;
 var COLORS = ['green','blue','purple','yellow','orange','cyan','red'];
 var PROVIDER_COLORS = {groq:'green',cerebras:'purple',gemini:'blue',mistral:'cyan',openrouter:'orange',ollama:'yellow'};
 var ROUTE_COLORS = {auto_healed:'green',dev_issue:'red',needs_escalation:'yellow',rollback:'orange',needs_approval:'orange',rejected:'red'};
-var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users','reports'];
+var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users','reports','dr'];
 
-var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true, _canViewPods = true, _canViewContainers = true;
+var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true, _canViewPods = true, _canViewContainers = true, _canApprove = true;
 var _prevStats = {heals:0,calls:0,rollbacks:0,pdb:0,errors:0};
 var _prevDiagCount = 0, _latencyHistory = {}, _allRecs = [], _spRecId = null;
 var _timelineFilter = 'all';
 var _diagFilter = {pods:'active', containers:'active'};
 var _approvalFilter = 'active';
 var _statusRendered = false;
+var _statusGridKeys = '';
 var _knownDiagIds = {};
 var _showCreateForm = false;
 function findRecById(id){
@@ -2353,7 +2464,7 @@ setInterval(updateClock, 1000);
 updateClock();
 
 function pollStatus() {
-  fetch('/status').then(function(r){return r.json();}).then(function(d){renderSystemStatus(d);}).catch(function(){});
+  fetch('/status').then(function(r){return r.json();}).then(function(d){renderSystemStatus(d);if(_selectedTab==='dr')loadDR();}).catch(function(){});
 }
 pollStatus();
 setInterval(pollStatus, 30000);
@@ -2397,6 +2508,7 @@ function switchTab(name) {
   history.replaceState(null,'','#'+name);
   if (prev === 'metrics' && name !== 'metrics') destroyAllMetricCharts();
   if (name === 'metrics' && _lastMetricsData) { setTimeout(function(){buildAllMetricCharts(_lastMetricsData, _lastDiagsData);}, 50); }
+  if (name === 'dr') { setTimeout(loadDR, 60); }
  }
 (function(){var h=location.hash.replace('#','');if(VALID_TABS.includes(h))switchTab(h);})();
 document.querySelectorAll('#panel-metrics .range-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#panel-metrics .range-btn').forEach(function(x){x.classList.remove('active');});b.classList.add('active');_metricsTimeRange=b.dataset.range;if(_lastMetricsData)buildAllMetricCharts(_lastMetricsData,_lastDiagsData);});});
@@ -2560,11 +2672,15 @@ function renderSystemStatus(data) {
     {key:'n8n',       label:'n8n',        sub:'Webhook'},
     {key:'email',     label:'Email',      sub:'SMTP alerts'},
   ];
-  if(!_statusRendered){
+  if(data && data.k8s_dr_primary && data.k8s_dr_primary.configured) items.push({key:'k8s_dr_primary', label:'DR Primary', sub:'DR cluster'});
+  if(data && data.k8s_dr_standby && data.k8s_dr_standby.configured) items.push({key:'k8s_dr_standby', label:'DR Standby', sub:'Failover target'});
+  var gridKey=items.map(function(i){return i.key;}).join(',');
+  if(!_statusRendered || gridKey!==_statusGridKeys){
     el.innerHTML=items.map(function(it,i){
       return '<div class="status-item" id="si-'+it.key+'" style="animation-delay:'+(0.3+i*0.05)+'s"><div class="si-dot off"></div><div><div class="si-label">'+it.label+'</div>'+(it.sub?'<div class="si-sub">'+it.sub+'</div>':'')+'</div></div>';
     }).join('');
     _statusRendered = true;
+    _statusGridKeys = gridKey;
   }
   if(data){
     items.forEach(function(it){
@@ -2574,9 +2690,184 @@ function renderSystemStatus(data) {
       if(!dot)return;
       dot.className='si-dot '+(s.connected?'on':'off');
       var subEl=document.querySelector('#si-'+it.key+' .si-sub');
-      if(subEl)subEl.textContent=s.connected?'Connected':'Not connected';
+      if(subEl)subEl.textContent=s.connected?'Connected':('Not connected'+(s.detail?' — '+s.detail:''));
     });
   }
+}
+
+// ── Cloud Disaster Recovery ─────────────────────────────────
+var _drStatus = null, _drPendingRestore = null;
+
+function drTimeAgo(iso) {
+  if (!iso) return '—';
+  var t = new Date(iso); if (isNaN(t)) return String(iso).replace('T',' ').slice(0,19);
+  var s = Math.max(0, (Date.now() - t.getTime()) / 1000);
+  if (s < 60) return Math.floor(s) + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function drFmtBytes(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  return (n/1048576).toFixed(1) + ' MB';
+}
+
+function loadDR() {
+  fetch('/dr/status').then(function(r){ if (r.status === 401) return null; return r.json(); }).then(function(d){
+    if (!d) return;
+    _drStatus = d;
+    var tab = document.getElementById('dr-tab'), mtab = document.getElementById('m-dr-tab');
+    var note = document.getElementById('dr-disabled-note');
+    if (!d.enabled) {
+      if (tab) tab.style.display = 'none';
+      if (mtab) mtab.style.display = 'none';
+      if (note) note.style.display = '';
+      if (_selectedTab === 'dr') switchTab('overview');
+      return;
+    }
+    if (tab) tab.style.display = '';
+    if (mtab) mtab.style.display = '';
+    if (note) note.style.display = 'none';
+
+    ['primary','standby'].forEach(function(k){
+      var c = d[k] || {};
+      var ctx = document.getElementById('dr-ctx-' + k);
+      var det = document.getElementById('dr-detail-' + k);
+      var dot = document.getElementById('dr-dot-' + k);
+      if (!ctx || !det || !dot) return;
+      if (c.configured === false) {
+        ctx.textContent = c.context || 'Not configured';
+        det.textContent = 'Set DR_' + k.toUpperCase() + '_CONTEXT in .env';
+        dot.className = 'dr-dot';
+        return;
+      }
+      ctx.textContent = c.context || '—';
+      det.textContent = c.detail || '—';
+      dot.className = 'dr-dot ' + (c.connected ? 'on' : 'off');
+    });
+
+    var banner = document.getElementById('dr-disaster-banner');
+    if (d.disaster && d.disaster.active) {
+      banner.style.display = '';
+      document.getElementById('dr-disaster-detail').textContent =
+        'Cluster ' + d.disaster.cluster + ' unreachable since ' + d.disaster.since + ' — ' + d.disaster.detail;
+    } else {
+      banner.style.display = 'none';
+    }
+
+    document.getElementById('dr-stat-count').textContent = d.backup_count || 0;
+    document.getElementById('dr-stat-last').textContent = drTimeAgo(d.last_backup_at);
+    document.getElementById('dr-stat-interval').textContent =
+      d.auto_backup && d.auto_backup.enabled ? Math.round(d.auto_backup.interval_sec / 3600) + 'h' : 'off';
+    document.getElementById('dr-stat-mode').textContent = d.velero ? 'Velero' : 'Manifest';
+    document.getElementById('dr-namespaces').textContent =
+      'Namespaces: ' + (d.namespaces || []).join(', ') + (d.secrets_included ? '  •  secrets included' : '');
+    var sp = document.getElementById('dr-restore-ctx-p'), ss = document.getElementById('dr-restore-ctx-s');
+    if (sp) sp.textContent = d.primary.context || '';
+    if (ss) ss.textContent = (d.standby && d.standby.configured) ? (d.standby.context || '') : 'not configured';
+
+    var backupBtn = document.getElementById('dr-backup-btn');
+    if (backupBtn) backupBtn.style.display = _canApprove ? '' : 'none';
+
+    loadDrBackups();
+  }).catch(function(){});
+}
+
+function loadDrBackups() {
+  fetch('/dr/backups').then(function(r){ if (r.status === 401) return null; return r.json(); }).then(function(d){
+    if (!d) return;
+    renderDrBackups(d.backups || []);
+  }).catch(function(){});
+}
+
+function renderDrBackups(list) {
+  var tb = document.getElementById('dr-backups-body');
+  if (!tb) return;
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="dr-empty">No snapshots yet — take one now</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(function(b){
+    var when = b.created_at ? String(b.created_at).replace('T',' ').slice(0,19) + ' UTC' : '—';
+    var restoreBtn = _canApprove
+      ? '<button class="dr-restore-btn" onclick="openDrRestore(\'' + esc(b.id) + '\')">Restore</button>'
+      : '';
+    return '<tr><td>' + esc(when) + '</td>'
+      + '<td><span class="dr-pill ' + (b.cluster === 'primary' ? 'ok' : 'bad') + '">' + esc(b.cluster || '') + '</span></td>'
+      + '<td>' + esc(b.namespaces || '') + '</td>'
+      + '<td>' + (b.resource_count || 0) + '</td>'
+      + '<td>' + drFmtBytes(b.bytes || 0) + '</td>'
+      + '<td>' + esc(b.created_by || '') + '</td>'
+      + '<td style="text-align:right">' + restoreBtn + '</td></tr>';
+  }).join('');
+}
+
+function drBackupNow() {
+  var btn = document.getElementById('dr-backup-btn');
+  if (!btn) return;
+  btn.disabled = true; btn.textContent = 'Snapshotting…';
+  fetch('/dr/backup', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({cluster:'primary'})})
+  .then(function(r){ return r.json().then(function(j){ return {s:r.status, j:j}; }); })
+  .then(function(x){
+    btn.disabled = false; btn.textContent = 'Take snapshot now';
+    if (x.s !== 200 || !x.j.ok) {
+      showToast('Snapshot failed', (x.j && x.j.error) || 'error', 'rejected');
+    } else {
+      showToast('Snapshot ' + x.j.backup.id, (x.j.backup.resource_count||0) + ' resources captured', 'auto_healed');
+      loadDR();
+    }
+  }).catch(function(){ btn.disabled = false; btn.textContent = 'Take snapshot now'; });
+}
+
+function openDrRestore(id) {
+  _drPendingRestore = id;
+  var el = document.getElementById('dr-restore-modal');
+  var msg = document.getElementById('dr-restore-msg');
+  if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+  document.getElementById('dr-restore-id').textContent = id;
+  // If primary is down, default to standby; disable unreachable targets
+  var primaryOk = _drStatus && _drStatus.primary && _drStatus.primary.connected;
+  var standbyOk = _drStatus && _drStatus.standby && _drStatus.standby.connected && _drStatus.standby.configured;
+  var rPrimary = document.querySelector('input[name="dr-target"][value="primary"]');
+  var rStandby = document.querySelector('input[name="dr-target"][value="standby"]');
+  rPrimary.disabled = !primaryOk; rStandby.disabled = !standbyOk;
+  rPrimary.checked = primaryOk; rStandby.checked = !primaryOk && standbyOk;
+  el.classList.add('active');
+}
+function closeDrRestoreModal() {
+  var el = document.getElementById('dr-restore-modal');
+  if (el) el.classList.remove('active');
+}
+function confirmDrRestore() {
+  if (!_drPendingRestore) return;
+  var sel = document.querySelector('input[name="dr-target"]:checked');
+  var target = sel ? sel.value : 'primary';
+  var btn = document.getElementById('dr-restore-confirm-btn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  fetch('/dr/restore', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({backup_id: _drPendingRestore, target: target})})
+  .then(function(r){ return r.json().then(function(j){ return {s:r.status, j:j}; }); })
+  .then(function(x){
+    btn.disabled = false; btn.textContent = 'Request restore';
+    if (x.s !== 200 || !x.j.ok) {
+      showToast('Restore failed', (x.j && x.j.error) || 'error', 'rejected');
+      return;
+    }
+    if (x.j.mode === 'approval') {
+      showToast('Approval requested', 'restore ' + _drPendingRestore + ' → ' + target, 'needs_approval');
+      if (typeof fetchApprovals === 'function') fetchApprovals();
+    } else {
+      showToast('Restore started', _drPendingRestore + ' → ' + target, 'auto_healed');
+    }
+    closeDrRestoreModal();
+    _drPendingRestore = null;
+    setTimeout(loadDR, 1500);
+  }).catch(function(){
+    btn.disabled = false; btn.textContent = 'Request restore';
+  });
 }
 
 function renderActivityFeed(recs) {
@@ -2620,7 +2911,7 @@ function renderTimeline(recs) {
     items=items.filter(function(r){
       if(r.deleted) return false;
       var s=(r.status||'').toLowerCase();
-      if(_timelineFilter==='critical')return s.indexOf('oom')!==-1||s.indexOf('crashloop')!==-1||r.route==='rejected';
+      if(_timelineFilter==='critical')return s.indexOf('oom')!==-1||s.indexOf('crashloop')!==-1||s.indexOf('critical')!==-1||r.route==='rejected';
       if(_timelineFilter==='warning')return s.indexOf('error')!==-1||s.indexOf('failed')!==-1||r.route==='needs_approval';
       if(_timelineFilter==='success')return r.route==='auto_healed';
       return true;
@@ -2629,7 +2920,7 @@ function renderTimeline(recs) {
   if(items.length===0){smartUpdate(el,[{id:'vtl-empty',html:'<div class="vtl-empty" data-id="vtl-empty">No entries match this filter</div>'}]);return;}
   var updateItems=items.map(function(r){
     var sev='info',s=(r.status||'').toLowerCase();
-    if(s.indexOf('oom')!==-1||s.indexOf('crashloop')!==-1||r.route==='rejected')sev='critical';
+    if(s.indexOf('oom')!==-1||s.indexOf('crashloop')!==-1||s.indexOf('critical')!==-1||r.route==='rejected')sev='critical';
     else if(s.indexOf('error')!==-1||s.indexOf('failed')!==-1||r.route==='needs_approval')sev='warning';
     else if(r.route==='auto_healed')sev='success';
     var ts=fmtTimestamp(r.timestamp)?fmtTimestamp(r.timestamp):'';
@@ -2755,9 +3046,9 @@ function renderDiagnoses(recs) {
 
 function rateClass(r){return r>=95?'rate-good':r>=70?'rate-warn':'rate-bad';}
 function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):'';}
-function statusBadge(s){s=(s||'').toLowerCase();if(s.indexOf('oom')!==-1)return '<span class="badge badge-oom">OOM</span>';if(s.indexOf('crashloop')!==-1||s.indexOf('restartloop')!==-1)return '<span class="badge badge-crash">CrashLoop</span>';if(s.indexOf('error')!==-1||s.indexOf('failed')!==-1)return '<span class="badge badge-error">Error</span>';if(s.indexOf('running')!==-1)return '<span class="badge badge-healed">Running</span>';return s?'<span class="badge badge-other">'+esc(s)+'</span>':'';}
+function statusBadge(s){s=(s||'').toLowerCase();if(s.indexOf('oom')!==-1)return '<span class="badge badge-oom">OOM</span>';if(s.indexOf('crashloop')!==-1||s.indexOf('restartloop')!==-1)return '<span class="badge badge-crash">CrashLoop</span>';if(s.indexOf('error')!==-1||s.indexOf('failed')!==-1||s.indexOf('critical')!==-1)return '<span class="badge badge-error">Error</span>';if(s.indexOf('running')!==-1||s.indexOf('resolved')!==-1)return '<span class="badge badge-healed">Running</span>';return s?'<span class="badge badge-other">'+esc(s)+'</span>':'';}
 function routeBadge(r){r=(r||'').toLowerCase();if(r==='auto_healed')return '<span class="badge badge-healed">healed</span>';if(r==='dev_issue')return '<span class="badge badge-dev">dev</span>';if(r==='rollback')return '<span class="badge badge-rollback">rollback</span>';if(r==='needs_escalation')return '<span class="badge badge-escalate">escalation</span>';if(r==='needs_approval')return '<span class="badge badge-approval">needs approval</span>';if(r==='rejected')return '<span class="badge badge-rejected">rejected</span>';if(r==='removed')return '<span class="badge badge-removed">removed</span>';return '<span class="badge badge-other">'+esc(r)+'</span>';}
-function platformBadge(p){return p==='k8s'?'<span class="badge badge-k8s">K8s</span>':'<span class="badge badge-docker">Docker</span>';}
+function platformBadge(p){if(p==='dr')return '<span class="badge badge-k8s" style="background:rgba(188,140,255,0.15);color:var(--purple,#bc8cff)">DR</span>';return p==='k8s'?'<span class="badge badge-k8s">K8s</span>':'<span class="badge badge-docker">Docker</span>';}
 function isCritical(s){s=(s||'').toLowerCase();return s.indexOf('oom')!==-1||s.indexOf('crashloop')!==-1||s.indexOf('restartloop')!==-1;}
 
 function update(d) {
@@ -3587,6 +3878,7 @@ function checkUserPermissions(cb) {
       var mat = document.getElementById('m-approvals-tab');
       if (at) {
         _canViewApprovals = p.can_view_approvals || false;
+        _canApprove = p.can_approve || false;
         at.style.display = _canViewApprovals ? '' : 'none';
         if (mat) mat.style.display = _canViewApprovals ? '' : 'none';
       }
@@ -3799,6 +4091,7 @@ function setReportRange(btn, days) {
 function poll() {
   checkUserPermissions(function() {
     fetchApprovals();
+    loadDR();
     if (_selectedTab === 'users') fetchUsers();
   });
   fetch('/metrics/api').then(function(r){return r.json();}).then(function(d){_lastMetricsData=d; snapshotMetrics(d); update(d); buildAllMetricCharts(d,_lastDiagsData);}).catch(function(){});
@@ -5156,6 +5449,30 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+        elif self.path == "/dr/status" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _validate_session(cookie):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            self._respond(200, dr_module.get_status())
+
+        elif self.path == "/dr/backups" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _validate_session(cookie):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if not _storage:
+                self._respond(200, {"backups": []})
+                return
+            try:
+                backups = _storage.list_backups(limit=50)
+                for b in backups:
+                    if hasattr(b.get("created_at"), "isoformat"):
+                        b["created_at"] = b["created_at"].isoformat()
+                self._respond(200, {"backups": backups})
+            except Exception as e:
+                self._respond(500, {"error": str(e)[:120]})
+
         elif self.path.startswith("/circuit/breaker") and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")
             if not _validate_session(cookie):
@@ -5449,6 +5766,127 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/chat" and METRICS_ENABLED:
             _handle_chat(self)
+
+        elif self.path == "/dr/backup" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_approve", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if not dr_module.is_enabled():
+                self._respond(400, {"error": "Disaster recovery is disabled"})
+                return
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+            data = self._read_body() or {}
+            cluster = data.get("cluster", "primary")
+            if cluster not in ("primary", "standby"):
+                self._respond(400, {"error": "cluster must be primary or standby"})
+                return
+            try:
+                row = dr_module.backup_manifests(
+                    label=cluster,
+                    created_by=session.get("username", "dashboard"),
+                    notes=data.get("label", "manual"),
+                )
+                if hasattr(row.get("created_at"), "isoformat"):
+                    row["created_at"] = row["created_at"].isoformat()
+                self._respond(200, {"ok": True, "backup": row})
+            except Exception as e:
+                log.warning("Manual DR backup failed: %s", e)
+                self._respond(500, {"error": str(e)[:200]})
+
+        elif self.path == "/dr/restore" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_approve", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if not dr_module.is_enabled():
+                self._respond(400, {"error": "Disaster recovery is disabled"})
+                return
+            if not _storage:
+                self._respond(500, {"error": "Database not available"})
+                return
+            data = self._read_body() or {}
+            backup_id = (data.get("backup_id") or "").strip()
+            target = data.get("target", "primary")
+            if not backup_id:
+                self._respond(400, {"error": "backup_id required"})
+                return
+            if target not in ("primary", "standby"):
+                self._respond(400, {"error": "target must be primary or standby"})
+                return
+            row = _storage.get_backup(backup_id)
+            if not row:
+                self._respond(404, {"error": "backup not found"})
+                return
+            namespaces = row.get("namespaces") or ""
+            params = {
+                "backup_id": backup_id,
+                "target": target,
+                "action": "restore_backup",
+                "reason": f"DR restore of snapshot {backup_id} to {target} cluster",
+                "summary": f"Restore snapshot {backup_id} → {target} cluster "
+                           f"({row.get('resource_count', '?')} resources)",
+                "root_cause": "Disaster recovery restore requested from DR tab",
+                "recommendation": "Approve to rebuild workloads from snapshot; "
+                                  "Reject to keep current cluster state.",
+            }
+            if not _approval_store:
+                # Approvals disabled → execute directly in background
+                threading.Thread(
+                    target=lambda: _run_direct_restore(backup_id, target,
+                                                       session.get("username", "dashboard")),
+                    daemon=True, name="dr-direct-restore",
+                ).start()
+                self._respond(200, {"ok": True, "mode": "direct",
+                                    "message": "Restore started"})
+                return
+            approval_id = _approval_store.create(
+                target={
+                    "name": f"restore-{backup_id}",
+                    "namespace": namespaces,
+                    "deployment": "",
+                    "backup_id": backup_id,
+                },
+                action="restore_backup",
+                params=params,
+                platform="dr",
+                location="disaster-recovery",
+                issue_type="disaster_recovery",
+                restarts=0,
+                logs="",
+                used_model="",
+                cost_data="",
+                is_developer_issue=False,
+            )
+            try:
+                send_approval_email(
+                    approval_id, f"restore-{backup_id}", "disaster-recovery",
+                    params, "disaster_recovery", "dr", 0, "", "",
+                )
+            except Exception as e:
+                log.warning("DR approval email failed: %s", e)
+            try:
+                notify_n8n({
+                    "route": "needs_approval",
+                    "approval_id": approval_id,
+                    "platform": "dr",
+                    "action": "restore_backup",
+                    "target_name": f"restore-{backup_id}",
+                    "location": "disaster-recovery",
+                    "summary": params["summary"],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+            except Exception as e:
+                log.warning("DR n8n notify failed: %s", e)
+            self._respond(200, {
+                "ok": True, "mode": "approval", "approval_id": approval_id,
+                "message": "Approval requested",
+            })
+
         else:
             self._respond(404, {"error": "not found"})
 
@@ -5502,6 +5940,24 @@ p {{ color: #666; font-size: 14px; }}
 
     def log_message(self, format: str, *args: Any) -> None:
         pass
+
+
+def _run_direct_restore(backup_id: str, target: str, by: str) -> None:
+    """Background direct restore when approval mode is off."""
+    try:
+        result = dr_module.restore_backup(backup_id, target)
+        log.info("DR direct restore by %s: %s", by, result)
+        notify_n8n({
+            "route": "auto_healed" if "[ERROR]" not in result else "rollback",
+            "platform": "dr",
+            "action": "restore_backup",
+            "target_name": f"restore-{backup_id}",
+            "location": "disaster-recovery",
+            "summary": result,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        log.error("DR direct restore failed: %s", e)
 
 
 def start_health_server() -> threading.Thread | None:

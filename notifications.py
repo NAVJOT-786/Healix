@@ -108,7 +108,7 @@ def send_dev_email(
     if not recipients:
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    badge_plat = "KUBERNETES" if platform == "k8s" else "DOCKER"
+    badge_plat = {"k8s": "KUBERNETES", "docker": "DOCKER", "dr": "DISASTER RECOVERY"}.get(platform, platform.upper())
 
     html = _email_head(
         "Pod / Container Issue - Developer Action Required",
@@ -145,7 +145,7 @@ def send_resolution_email(
     if not recipients:
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    badge_plat = "KUBERNETES" if platform == "k8s" else "DOCKER"
+    badge_plat = {"k8s": "KUBERNETES", "docker": "DOCKER", "dr": "DISASTER RECOVERY"}.get(platform, platform.upper())
 
     html = _email_head(
         "Auto-Healed Successfully",
@@ -183,7 +183,7 @@ def send_infra_report_email(
     if not recipients:
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    badge_plat = "KUBERNETES" if platform == "k8s" else "DOCKER"
+    badge_plat = {"k8s": "KUBERNETES", "docker": "DOCKER", "dr": "DISASTER RECOVERY"}.get(platform, platform.upper())
 
     html = _email_head(
         "Infra Issue Detected - No Auto-Fix Applied",
@@ -255,7 +255,7 @@ def send_rollback_email(
     if not recipients:
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    badge_plat = "KUBERNETES" if platform == "k8s" else "DOCKER"
+    badge_plat = {"k8s": "KUBERNETES", "docker": "DOCKER", "dr": "DISASTER RECOVERY"}.get(platform, platform.upper())
 
     html = _email_head(
         "Heal Action Failed - Rollback Applied",
@@ -296,7 +296,7 @@ def send_approval_email(
     if not recipients:
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    badge_plat = "KUBERNETES" if platform == "k8s" else "DOCKER"
+    badge_plat = {"k8s": "KUBERNETES", "docker": "DOCKER", "dr": "DISASTER RECOVERY"}.get(platform, platform.upper())
     base_url = APPROVAL_DASHBOARD_URL.rstrip("/") if APPROVAL_DASHBOARD_URL else ""
     approve_url = f"{base_url}/approve/{approval_id}" if base_url else ""
     reject_url = f"{base_url}/reject/{approval_id}" if base_url else ""
@@ -371,7 +371,7 @@ def send_approval_executed_email(
     if not recipients:
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    badge_plat = "KUBERNETES" if platform == "k8s" else "DOCKER"
+    badge_plat = {"k8s": "KUBERNETES", "docker": "DOCKER", "dr": "DISASTER RECOVERY"}.get(platform, platform.upper())
 
     html = _email_head(
         "Healing Action Executed (Approved)",
@@ -425,6 +425,32 @@ def send_approval_rejected_email(
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html, "html"))
     _smtp_send(recipients, msg, "approval-rejected")
+
+
+# ── Cloud Disaster Recovery alert ────────────────────────────────────────────
+
+def send_dr_alert_email(subject: str, rows_html: str, color: str = "#d9534f",
+                        badge: str = "DISASTER") -> None:
+    recipients = list({e.strip() for e in OPS_EMAILS + DEV_EMAILS if e.strip()})
+    if not recipients:
+        return
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    html = _email_head(subject, color, badge, color, "DISASTER RECOVERY")
+    html += _email_meta("Healix Cloud DR", "primary-cluster", ts,
+                        extra_rows=rows_html)
+    html += _email_sections(
+        ("Next step", "Open the Disaster Recovery tab in Healix to review "
+         "snapshots and trigger an approval-gated restore.", "action-box"),
+    )
+    html += _email_footer()
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"[Healix DR] {subject}"
+    msg["From"] = EMAIL_FROM
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(html, "html"))
+    _smtp_send(recipients, msg, "dr-alert")
 
 
 # ── User welcome email ────────────────────────────────────────────────────────

@@ -57,6 +57,7 @@ from observability import (
 )
 from prometheus import PrometheusClient, fetch_pod_metrics, format_metrics_for_prompt
 from k8s_events import fetch_warning_events
+import dr as dr_module
 
 log = logging.getLogger("agent")
 console = Console()
@@ -798,6 +799,25 @@ def run() -> None:
         event_watcher = K8sEventWatcher(v1, pending_heals, event_lock)
         event_watcher.start()
 
+    # ── Cloud Disaster Recovery ─────────────────────────────────────
+    if config.DR_ENABLED:
+        dr_module.set_storage(storage)
+        dr_module.set_labels({
+            "primary": config.DR_PRIMARY_CONTEXT,
+            "standby": config.DR_STANDBY_CONTEXT,
+        })
+        dr_module.set_reporter(service_status.set_platform)
+        if storage:
+            try:
+                dr_module.initial_backup()
+            except Exception as e:
+                log.warning("DR initial backup failed: %s", e)
+        console.print(
+            "[green]✓[/green] Cloud DR enabled — "
+            f"primary={config.DR_PRIMARY_CONTEXT or '(default)'} "
+            f"standby={config.DR_STANDBY_CONTEXT or '(none)'}"
+        )
+
     # Graceful shutdown
     def _shutdown(sig, frame):
         log.info("Received signal %s — shutting down", sig)
@@ -836,6 +856,7 @@ def run() -> None:
         f"Rollback verify     : [cyan]{'enabled (' + str(config.HEAL_VERIFY_DELAY_SEC) + 's delay)' if config.HEAL_VERIFY_ENABLED else 'disabled'}[/cyan]\n"
         f"Circuit breaker     : [cyan]{'enabled (threshold=' + str(config.CIRCUIT_BREAKER_THRESHOLD) + ', cooldown=' + str(config.CIRCUIT_BREAKER_COOLDOWN_MIN) + 'm)' if circuit_breaker else 'disabled'}[/cyan]\n"
         f"Database            : [green]{'PostgreSQL ✓' if storage else '✗ disabled'}[/green]\n"
+        f"Cloud DR            : [cyan]{('✓ primary=' + (config.DR_PRIMARY_CONTEXT or 'default') + ' standby=' + (config.DR_STANDBY_CONTEXT or '-')) if config.DR_ENABLED else 'disabled'}[/cyan]\n"
         f"Cost estimation     : [green]enabled[/green]\n"
         f"\n[bold]LLM Provider Chain:[/bold]\n{provider_status}\n"
         f"Chain order         : [cyan]{', '.join(config.DIAGNOSIS_PROVIDER_CHAIN)}[/cyan]\n"
@@ -900,6 +921,12 @@ def run() -> None:
                 dc, gemini_model, healed_containers, table, provider_registry,
                 circuit_breaker=circuit_breaker, storage=storage,
             )
+
+        if config.DR_ENABLED:
+            try:
+                dr_module.poll_cycle()
+            except Exception as e:
+                log.error("DR cycle failed: %s", e)
 
         console.print(table)
         console.print(

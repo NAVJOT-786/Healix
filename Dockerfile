@@ -28,6 +28,7 @@ COPY k8s_events.py .
 COPY approval.py .
 COPY email_reader.py .
 COPY storage.py .
+COPY dr.py .
 COPY circuit_breaker.py .
 COPY agent.py .
 COPY watchdog.sh .

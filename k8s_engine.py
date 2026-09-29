@@ -26,20 +26,33 @@ log = logging.getLogger("k8s_engine")
 #  CLIENT INIT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def init_k8s() -> tuple[client.CoreV1Api | None, client.AppsV1Api | None]:
-    try:
-        config.load_incluster_config()
-        log.info("Using in-cluster kubeconfig")
-    except config.ConfigException:
+def init_k8s(context: str = "") -> tuple[client.CoreV1Api | None, client.AppsV1Api | None]:
+    if context:
+        # Per-context clients (Cloud DR primary/standby clusters)
         try:
-            config.load_kube_config()
-            log.info("Using local kubeconfig")
+            cfg = client.Configuration()
+            config.load_kube_config(context=context, client_configuration=cfg)
+            api_client = client.ApiClient(cfg)
+            log.info("Using kubeconfig context: %s", context)
         except Exception as e:
-            log.error("Could not load kubeconfig: %s", e)
+            log.error("Could not load kubeconfig context %s: %s", context, e)
             return None, None
+        v1 = client.CoreV1Api(api_client)
+        apps_v1 = client.AppsV1Api(api_client)
+    else:
+        try:
+            config.load_incluster_config()
+            log.info("Using in-cluster kubeconfig")
+        except config.ConfigException:
+            try:
+                config.load_kube_config()
+                log.info("Using local kubeconfig")
+            except Exception as e:
+                log.error("Could not load kubeconfig: %s", e)
+                return None, None
 
-    v1 = client.CoreV1Api()
-    apps_v1 = client.AppsV1Api()
+        v1 = client.CoreV1Api()
+        apps_v1 = client.AppsV1Api()
 
     try:
         v1.list_namespace(_request_timeout=5)

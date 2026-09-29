@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "allocate.py": "import time\ndata = []\n# Continuously expands memory until hit by OOM killer\nwhile True:\n    data.append('X' * 10 * 1024 * 1024)\n    time.sleep(0.1)\n"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "oom-script",
+    "namespace": "demo"
+  }
+}

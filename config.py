@@ -192,6 +192,21 @@ CIRCUIT_BREAKER_WINDOW_MIN = int(os.getenv("CIRCUIT_BREAKER_WINDOW_MIN", "60"))
 CIRCUIT_BREAKER_COOLDOWN_MIN = int(os.getenv("CIRCUIT_BREAKER_COOLDOWN_MIN", "1440"))
 
 
+# ── Cloud Disaster Recovery ──────────────────────────────────────────────────
+
+DR_ENABLED             = os.getenv("DR_ENABLED", "false").lower() == "true"
+DR_PRIMARY_CONTEXT     = os.getenv("DR_PRIMARY_CONTEXT", "").strip()
+DR_STANDBY_CONTEXT     = os.getenv("DR_STANDBY_CONTEXT", "").strip()
+DR_BACKUP_AUTO         = os.getenv("DR_BACKUP_AUTO", "true").lower() == "true"
+DR_BACKUP_INTERVAL_SEC = int(os.getenv("DR_BACKUP_INTERVAL_SEC", "21600"))
+DR_BACKUP_SECRETS      = os.getenv("DR_BACKUP_SECRETS", "true").lower() == "true"
+DR_MAX_BACKUPS         = int(os.getenv("DR_MAX_BACKUPS", "20"))
+DR_DISASTER_FAIL_CYCLES = int(os.getenv("DR_DISASTER_FAIL_CYCLES", "3"))
+DR_VERIFY_TIMEOUT_SEC  = int(os.getenv("DR_VERIFY_TIMEOUT_SEC", "45"))
+DR_PAYLOAD_MAX_BYTES   = int(os.getenv("DR_PAYLOAD_MAX_BYTES", str(10 * 1024 * 1024)))
+VELERO_ENABLED         = os.getenv("VELERO_ENABLED", "false").lower() == "true"
+
+
 def validate() -> list[str]:
     """Return list of config warnings (non-fatal)."""
     warnings: list[str] = []
