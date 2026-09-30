@@ -284,21 +284,35 @@ def collect_resources(v1, apps_v1, namespaces: list[str]) -> list[dict]:
 def _record_event(action: str, summary: str, *, success: bool = True,
                   status: str = "Resolved", route: str = "auto_healed",
                   name: str = "", namespace: str = "", detail: str = "") -> None:
-    """Timeline/audit record (platform='dr' shows in timeline)."""
-    if not _storage:
-        return
+    """Record DR event: Postgres (reports/audit) + in-memory (live timeline)."""
+    rec_name = name or action
+    if _storage:
+        try:
+            _storage.record_diagnosis(
+                platform="dr", name=rec_name, namespace=namespace,
+                location=_labels.get("primary", ""), deployment="",
+                status=status, restarts=0, action=action, route=route,
+                is_developer_issue=False, llm_model="", llm_latency=None,
+                summary=summary, root_cause=detail, recommendation="",
+                logs="", action_result="ok" if success else "failed",
+                cost_data="", success=success,
+            )
+        except Exception as e:
+            log.warning("DR: failed to record timeline event: %s", e)
     try:
-        _storage.record_diagnosis(
-            platform="dr", name=name or action, namespace=namespace,
+        # Lazy import: observability imports dr at module load
+        from observability import diagnosis_store as _ui_store
+        _ui_store.record(
+            platform="dr", name=rec_name, namespace=namespace,
             location=_labels.get("primary", ""), deployment="",
             status=status, restarts=0, action=action, route=route,
-            is_developer_issue=False, llm_model="", llm_latency=None,
+            is_developer_issue=False, llm_model="", llm_latency=0.0,
             summary=summary, root_cause=detail, recommendation="",
             logs="", action_result="ok" if success else "failed",
             cost_data="", success=success,
         )
     except Exception as e:
-        log.warning("DR: failed to record timeline event: %s", e)
+        log.warning("DR: failed to record in-memory timeline event: %s", e)
 
 
 def _record_history(table: str, sql: str, params: tuple) -> None:
@@ -536,16 +550,36 @@ def _apply_one(api, create_fn: str, replace_fn: str, read_fn: str,
     from kubernetes.client import ApiException
     name = body["metadata"]["name"]
     try:
-        getattr(api, create_fn)(name=name, namespace=ns, body=body)
+        # create_* methods take (namespace, body) — no name kwarg
+        getattr(api, create_fn)(namespace=ns, body=body)
         return "created"
     except ApiException as e:
         if e.status != 409:
             raise
         cur = getattr(api, read_fn)(name=name, namespace=ns)
         cur_dict = api.api_client.sanitize_for_serialization(cur)
-        rv = (cur_dict.get("metadata") or {}).get("resourceVersion")
+        cur_md = cur_dict.get("metadata") or {}
+        cur_spec = cur_dict.get("spec") or {}
         new_body = copy.deepcopy(body)
-        new_body.setdefault("metadata", {})["resourceVersion"] = rv
+        md = new_body.setdefault("metadata", {})
+        # keep identity fields required for replace
+        md["resourceVersion"] = cur_md.get("resourceVersion")
+        if cur_md.get("uid"):
+            md["uid"] = cur_md.get("uid")
+        new_spec = new_body.get("spec")
+        if isinstance(new_spec, dict) and body.get("kind") == "Service":
+            # immutable/allocated fields must carry over on replace
+            for f in ("clusterIP", "clusterIPs", "ipFamilies",
+                      "ipFamilyPolicy", "internalTrafficPolicy"):
+                if f in cur_spec and f not in new_spec:
+                    new_spec[f] = cur_spec[f]
+            # per-port nodePort allocation
+            cur_ports = {p.get("port"): p.get("nodePort")
+                         for p in (cur_spec.get("ports") or [])
+                         if p.get("nodePort")}
+            for p in (new_spec.get("ports") or []):
+                if "nodePort" not in p and cur_ports.get(p.get("port")):
+                    p["nodePort"] = cur_ports[p["port"]]
         getattr(api, replace_fn)(name=name, namespace=ns, body=new_body)
         return "updated"
 
