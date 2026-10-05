@@ -6,6 +6,7 @@ and n8n webhook notifier. Includes cost data in reports.
 
 from __future__ import annotations
 
+import re
 import socket
 import smtplib
 import logging
@@ -18,6 +19,8 @@ from config import (
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM,
     DEV_EMAILS, OPS_EMAILS, DRY_RUN,
     N8N_WEBHOOK_URL, N8N_TIMEOUT_SEC, APPROVAL_DASHBOARD_URL,
+    SLACK_ENABLED, SLACK_WEBHOOK_URL, SLACK_TIMEOUT_SEC,
+    SLACK_USERNAME, SLACK_ICON_EMOJI,
 )
 from cost import format_cost_summary
 
@@ -104,6 +107,14 @@ def send_dev_email(
     recommendation: str, logs_snippet: str, action_result: str,
     platform: str, cost_data: str = "",
 ) -> None:
+    send_slack(
+        f"Manual fix required — {target_name}",
+        "#c0392b",
+        [("Target", target_name), ("Location", location),
+         ("Platform", platform.upper()), ("Summary", summary),
+         ("Root cause", root_cause), ("Recommendation", recommendation)],
+        label="dev-alert",
+    )
     recipients = [e.strip() for e in DEV_EMAILS if e.strip()]
     if not recipients:
         return
@@ -141,6 +152,14 @@ def send_resolution_email(
     action_taken: str, recommendation: str, logs_snippet: str,
     issue_type: str, platform: str, cost_data: str = "",
 ) -> None:
+    send_slack(
+        f"Auto-healed — {target_name}",
+        "#27ae60",
+        [("Target", target_name), ("Location", location),
+         ("Issue", issue_type), ("Action applied", action_taken),
+         ("Root cause", root_cause)],
+        label="resolution",
+    )
     recipients = list({e.strip() for e in OPS_EMAILS + DEV_EMAILS if e.strip()})
     if not recipients:
         return
@@ -179,6 +198,15 @@ def send_infra_report_email(
     recommended_action: str, recommendation: str, logs_snippet: str,
     issue_type: str, platform: str, cost_data: str = "",
 ) -> None:
+    send_slack(
+        f"Infra issue detected — {target_name}",
+        "#b8860b",
+        [("Target", target_name), ("Location", location),
+         ("Issue", issue_type), ("Summary", summary),
+         ("Recommended action", recommended_action)],
+        label="infra-issue-report",
+        footer="REPORT ONLY — action not applied",
+    )
     recipients = list({e.strip() for e in OPS_EMAILS + DEV_EMAILS if e.strip()})
     if not recipients:
         return
@@ -212,6 +240,13 @@ def send_infra_report_email(
 # ── Self-heal email ──────────────────────────────────────────────────────────
 
 def send_self_heal_email(restarted_at: str) -> None:
+    send_slack(
+        "Healix self-healed (watchdog restart)",
+        "#27ae60",
+        [("Agent", "ai-healer"), ("Host", socket.gethostname()),
+         ("Crashed at", restarted_at), ("Recovery", "Watchdog auto-restart")],
+        label="self-heal",
+    )
     all_recipients = list({e.strip() for e in DEV_EMAILS + OPS_EMAILS if e.strip()})
     if not all_recipients:
         return
@@ -251,6 +286,14 @@ def send_rollback_email(
     target_name: str, location: str, action: str, rollback_msg: str,
     root_cause: str, logs_snippet: str, platform: str,
 ) -> None:
+    send_slack(
+        f"Rollback — heal failed for {target_name}",
+        "#e67e22",
+        [("Target", target_name), ("Location", location),
+         ("Failed action", action), ("Rollback", rollback_msg),
+         ("Root cause", root_cause)],
+        label="rollback-escalation",
+    )
     recipients = list({e.strip() for e in DEV_EMAILS + OPS_EMAILS if e.strip()})
     if not recipients:
         return
@@ -292,6 +335,22 @@ def send_approval_email(
     cost_data: str,
     logs_snippet: str,
 ) -> None:
+    _base = APPROVAL_DASHBOARD_URL.rstrip("/") if APPROVAL_DASHBOARD_URL else ""
+    _approve_url = f"{_base}/approve/{approval_id}" if _base else ""
+    _reject_url = f"{_base}/reject/{approval_id}" if _base else ""
+    send_slack(
+        f"⚠️ Approval required — heal {params.get('action', 'action')} on {target_name}",
+        "#e67e22",
+        [("Target", target_name), ("Location", location),
+         ("Approval ID", approval_id), ("Issue", issue_type),
+         ("Restarts", str(restarts)), ("Action", params.get("action", "unknown")),
+         ("Summary", params.get("summary", "Issue detected"))],
+        label="approval-request",
+        link_text="Approve" if _approve_url else "",
+        link_url=_approve_url,
+        extra_links=[("Reject", _reject_url)] if _reject_url else [],
+        footer="Healix approval queue",
+    )
     recipients = [e.strip() for e in DEV_EMAILS + OPS_EMAILS if e.strip()]
     if not recipients:
         return
@@ -367,6 +426,14 @@ def send_approval_executed_email(
     approved_by: str,
     platform: str,
 ) -> None:
+    send_slack(
+        f"Approved & executed — {action} on {target_name}",
+        "#27ae60",
+        [("Target", target_name), ("Location", location),
+         ("Action", action), ("Approved by", approved_by),
+         ("Result", action_result)],
+        label="approval-executed",
+    )
     recipients = [e.strip() for e in DEV_EMAILS + OPS_EMAILS if e.strip()]
     if not recipients:
         return
@@ -402,6 +469,14 @@ def send_approval_rejected_email(
     location: str,
     rejected_by: str,
 ) -> None:
+    send_slack(
+        f"Rejected — heal on {target_name}",
+        "#c0392b",
+        [("Target", target_name), ("Location", location),
+         ("Approval ID", approval_id), ("Rejected by", rejected_by),
+         ("Status", "Issue remains unresolved")],
+        label="approval-rejected",
+    )
     recipients = [e.strip() for e in DEV_EMAILS + OPS_EMAILS if e.strip()]
     if not recipients:
         return
@@ -431,6 +506,15 @@ def send_approval_rejected_email(
 
 def send_dr_alert_email(subject: str, rows_html: str, color: str = "#d9534f",
                         badge: str = "DISASTER") -> None:
+    _rows_text = re.sub(r"<[^>]+>", " ", rows_html)
+    _rows_text = re.sub(r"\s+", " ", _rows_text).strip()[:400]
+    send_slack(
+        f"[{badge}] {subject}",
+        color,
+        [("DR status", badge), ("Details", _rows_text)],
+        label="dr-alert",
+        footer="Healix Cloud DR",
+    )
     recipients = list({e.strip() for e in OPS_EMAILS + DEV_EMAILS if e.strip()})
     if not recipients:
         return
@@ -569,3 +653,56 @@ def notify_n8n(payload: dict) -> None:
         log.error("n8n webhook timed out after %ds", N8N_TIMEOUT_SEC)
     except Exception as e:
         log.error("n8n notify failed: %s", e)
+
+
+# ── Slack Notifier ────────────────────────────────────────────────────────────
+
+def send_slack(
+    title: str,
+    color: str,
+    fields: list[tuple[str, str]],
+    label: str = "alert",
+    link_text: str = "",
+    link_url: str = "",
+    extra_links: list[tuple[str, str]] | None = None,
+    footer: str = "",
+) -> None:
+    """Post an attachment card to Slack. Never raises — email path must survive."""
+    if not SLACK_ENABLED or not SLACK_WEBHOOK_URL:
+        return
+    if DRY_RUN:
+        log.info("[DRY RUN] Would send Slack %s: %s", label, title)
+        return
+    try:
+        blocks_fields = [
+            {"title": t, "value": (v if len(v) <= 300 else v[:297] + "…"), "short": len(v) < 40}
+            for t, v in fields if v
+        ]
+        attachment: dict = {"color": color, "title": title, "fields": blocks_fields}
+        actions = []
+        if link_text and link_url:
+            actions.append({"type": "button", "text": link_text, "url": link_url})
+        for txt, url in (extra_links or []):
+            actions.append({"type": "button", "text": txt, "url": url})
+        if actions:
+            attachment["actions"] = actions
+        if footer:
+            attachment["footer"] = footer
+        payload = {
+            "username": SLACK_USERNAME,
+            "icon_emoji": SLACK_ICON_EMOJI,
+            "attachments": [attachment],
+        }
+        resp = requests.post(
+            SLACK_WEBHOOK_URL, json=payload, timeout=SLACK_TIMEOUT_SEC
+        )
+        if resp.status_code == 200 and resp.text.strip() == "ok":
+            log.info("slack notified (%s)", label)
+        else:
+            log.warning(
+                "Slack responded HTTP %d: %s", resp.status_code, resp.text[:120]
+            )
+    except requests.exceptions.Timeout:
+        log.error("Slack webhook timed out after %ds", SLACK_TIMEOUT_SEC)
+    except Exception as e:
+        log.error("Slack notify failed: %s", e)

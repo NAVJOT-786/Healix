@@ -106,6 +106,14 @@ PROMETHEUS_TIMEOUT_SEC = int(os.getenv("PROMETHEUS_TIMEOUT_SEC", "5"))
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_TIMEOUT_SEC = int(os.getenv("N8N_TIMEOUT_SEC", "5"))
 
+# ── Slack ─────────────────────────────────────────────────────────────────────
+
+SLACK_ENABLED     = os.getenv("SLACK_ENABLED", "false").lower() == "true"
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+SLACK_TIMEOUT_SEC = int(os.getenv("SLACK_TIMEOUT_SEC", "5"))
+SLACK_USERNAME    = os.getenv("SLACK_USERNAME", "Healix")
+SLACK_ICON_EMOJI  = os.getenv("SLACK_ICON_EMOJI", ":robot_face:")
+
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
