@@ -269,6 +269,13 @@ def _process_approved(
             else:
                 action_result = f"[ERROR] No context for platform={platform}"
 
+            # Execution "succeeded" only if the result string is not a failure
+            # marker — no exception does NOT imply the action worked.
+            _FAILURE_MARKERS = (
+                "Cannot determine", "Cannot patch", "[ERROR]", "Unknown action",
+            )
+            exec_ok = not any(m in (action_result or "") for m in _FAILURE_MARKERS)
+
             rolled_back = False
             if (
                 platform == "k8s"
@@ -298,7 +305,8 @@ def _process_approved(
                 action, action_result, req.approved_by, platform,
             )
 
-            route = "rollback" if rolled_back else "auto_healed"
+            heal_success = exec_ok and not rolled_back
+            route = "rollback" if rolled_back else ("auto_healed" if exec_ok else "needs_escalation")
             notify_n8n_fn({
                 "route": route,
                 "approval_id": req.id,
@@ -323,12 +331,12 @@ def _process_approved(
                 req.id,
                 route=route,
                 action_result=action_result,
-                success=not rolled_back,
+                success=heal_success,
             )
 
             # ── Record in circuit breaker ─────────────────────────────
             if circuit_breaker:
-                circuit_breaker.record_heal(uid, action, success=not rolled_back)
+                circuit_breaker.record_heal(uid, action, success=heal_success)
 
             log.info("Approved action executed: %s — result: %s", req.id, action_result)
 
@@ -337,6 +345,15 @@ def _process_approved(
             with store._lock:
                 req.status = "pending"
                 req.action_result = f"Execution failed: {e}"
+            if circuit_breaker:
+                try:
+                    cb_uid = (
+                        f"{req.platform}/{req.target.get('namespace', '')}/"
+                        f"{req.target.get('name', '')}"
+                    )
+                    circuit_breaker.record_heal(cb_uid, req.action, success=False)
+                except Exception as cb_err:
+                    log.debug("Circuit breaker failure record skipped: %s", cb_err)
 
 
 def _process_rejected(store, notify_n8n_fn, update_diagnosis_fn) -> None:
