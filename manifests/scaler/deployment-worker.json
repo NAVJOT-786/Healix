@@ -1,0 +1,49 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "scaler-worker",
+    "namespace": "demo",
+    "labels": {
+      "app": "scaler-worker"
+    }
+  },
+  "spec": {
+    "replicas": 0,
+    "selector": {
+      "matchLabels": {
+        "app": "scaler-worker"
+      }
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "scaler-worker"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "worker",
+            "image": "alpine:3.20",
+            "command": [
+              "sh",
+              "-c",
+              "while true; do wget -qO- 'http://scaler-loadgen.demo.svc:8080/work/take?items=2' >/dev/null 2>&1 || true; sleep 1; done"
+            ],
+            "resources": {
+              "requests": {
+                "cpu": "25m",
+                "memory": "32Mi"
+              },
+              "limits": {
+                "cpu": "200m",
+                "memory": "64Mi"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

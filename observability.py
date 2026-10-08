@@ -48,6 +48,7 @@ from notifications import (
     send_approval_email, notify_n8n,
 )
 import dr as dr_module
+import scale_engine
 
 log = logging.getLogger("observability")
 
@@ -370,14 +371,24 @@ class ServiceStatus:
             return
         try:
             resp = requests.get(f"{PROMETHEUS_URL}/api/v1/status/config", timeout=3)
-            self._status["prometheus"]["connected"] = resp.status_code == 200
-            self._status["prometheus"]["detail"] = f"HTTP {resp.status_code}"
+            # Validate it really is Prometheus — other services (Cockpit!)
+            # return HTTP 200 HTML for unknown paths.
+            body = resp.json() if resp.status_code == 200 else None
+            ok = isinstance(body, dict) and body.get("status") == "success"
+            self._status["prometheus"]["connected"] = ok
+            self._status["prometheus"]["detail"] = (
+                "HTTP 200" if ok else
+                f"HTTP {resp.status_code} — not a Prometheus response"
+            )
         except requests.exceptions.ConnectionError:
             self._status["prometheus"]["connected"] = False
             self._status["prometheus"]["detail"] = "connection refused"
         except requests.exceptions.Timeout:
             self._status["prometheus"]["connected"] = False
             self._status["prometheus"]["detail"] = "timeout"
+        except ValueError:
+            self._status["prometheus"]["connected"] = False
+            self._status["prometheus"]["detail"] = "invalid response (not Prometheus?)"
         except Exception as e:
             self._status["prometheus"]["connected"] = False
             self._status["prometheus"]["detail"] = str(e)[:80]
@@ -1398,6 +1409,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .badge-approval { background: rgba(240,136,62,0.18); color: var(--orange); border: 1px solid rgba(240,136,62,0.3); }
   .badge-rejected { background: rgba(248,81,73,0.12); color: var(--red); }
   .badge-removed { background: rgba(139,148,158,0.08); color: var(--text3); text-decoration: line-through; }
+  .badge-scaled { background: rgba(88,166,255,0.12); color: var(--blue); }
   .diag-card.removed { opacity: 0.45; border-style: dashed; border-color: var(--text3); pointer-events: none; }
   .diag-empty { color: var(--text2); font-size: 13px; font-style: italic; padding: 40px; text-align: center; }
 
@@ -1683,6 +1695,8 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
   .dr-pill { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
   .dr-pill.ok { background: rgba(63,185,80,0.15); color: var(--green); }
   .dr-pill.bad { background: rgba(248,81,73,0.15); color: var(--red); }
+  .dr-pill.warn { background: rgba(240,136,62,0.15); color: var(--orange); }
+  .dr-pill.info { background: rgba(88,166,255,0.15); color: var(--blue); }
 
   /* ── Boot Splash (crack -> join logo) ───────────── */
   #boot-splash { position: fixed; inset: 0; z-index: 9998; background: #0a0e17; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; opacity: 1; transition: opacity 0.6s ease; will-change: opacity; }
@@ -1862,6 +1876,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
 <button class="tab-btn" data-tab="approvals" id="approvals-tab">Approvals <span class="tab-badge" id="approval-count" style="display:none">0</span></button>
 <button class="tab-btn" data-tab="reports">Reports</button>
 <button class="tab-btn" data-tab="dr" id="dr-tab">Disaster Recovery</button>
+<button class="tab-btn" data-tab="scaling" id="scaling-tab">Scaling</button>
     </nav>
     <div class="hdr-user-menu" id="hdr-user-menu">
       <button class="hdr-user-btn" onclick="toggleUserMenu(event)" title="Account">
@@ -1939,6 +1954,7 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
     <button class="tab-btn mobile-tab" data-tab="approvals" id="m-approvals-tab">Approvals</button>
     <button class="tab-btn mobile-tab" data-tab="reports">Reports</button>
     <button class="tab-btn mobile-tab" data-tab="dr" id="m-dr-tab">Disaster Recovery</button>
+    <button class="tab-btn mobile-tab" data-tab="scaling" id="m-scaling-tab">Scaling</button>
   </nav>
 </aside>
 
@@ -2235,6 +2251,40 @@ _DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="tab-panel" id="panel-scaling">
+      <div class="panel full-panel">
+        <div class="panel-title">Healix Scaler <span class="dr-pill info" id="sc-engine-badge">&hellip;</span></div>
+        <div id="sc-disabled-note" class="dr-disabled" style="display:none">Event-driven scaling is disabled. Set <code>SCALE_ENABLED=true</code> in .env and define rules in <code>scale_rules.yaml</code> to activate metric-based replica scaling.</div>
+        <div id="sc-error-banner" class="dr-banner" style="display:none">
+          <span class="dr-banner-icon">!</span>
+          <div class="dr-banner-text">
+            <strong>Scaler engine not running</strong>
+            <div id="sc-error-detail" class="dr-banner-detail"></div>
+          </div>
+        </div>
+        <div class="dr-stats-row">
+          <div class="dr-stat"><div class="dr-stat-val" id="sc-stat-rules">0</div><div class="dr-stat-label">Rules</div></div>
+          <div class="dr-stat"><div class="dr-stat-val" id="sc-stat-poll">&mdash;</div><div class="dr-stat-label">Poll interval</div></div>
+          <div class="dr-stat"><div class="dr-stat-val" id="sc-stat-up">0</div><div class="dr-stat-label">Scale-ups</div></div>
+          <div class="dr-stat"><div class="dr-stat-val" id="sc-stat-down">0</div><div class="dr-stat-label">Scale-downs</div></div>
+        </div>
+        <div class="panel-title" style="margin-top:20px">Rules</div>
+        <div class="dr-table-wrap">
+          <table class="dr-table">
+            <thead><tr><th>Rule</th><th>Source</th><th>Metric</th><th>Target/pod</th><th>Desired</th><th>Actual</th><th>State</th><th></th></tr></thead>
+            <tbody id="sc-rules-body"><tr><td colspan="8" class="dr-empty">Loading&hellip;</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel-title" style="margin-top:20px">Recent scaling events</div>
+        <div class="dr-table-wrap">
+          <table class="dr-table">
+            <thead><tr><th>Time</th><th>Rule</th><th>Change</th><th>Reason</th><th>Mode</th></tr></thead>
+            <tbody id="sc-events-body"><tr><td colspan="5" class="dr-empty">No scaling events yet</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </div>
 </main>
 
@@ -2247,7 +2297,7 @@ var CONFIG = __CONFIG__;
 var COLORS = ['green','blue','purple','yellow','orange','cyan','red'];
 var PROVIDER_COLORS = {groq:'green',cerebras:'purple',gemini:'blue',mistral:'cyan',openrouter:'orange',ollama:'yellow'};
 var ROUTE_COLORS = {auto_healed:'green',dev_issue:'red',needs_escalation:'yellow',rollback:'orange',needs_approval:'orange',rejected:'red'};
-var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users','reports','dr'];
+var VALID_TABS = ['overview','pods','containers','timeline','llm','metrics','approvals','users','reports','dr','scaling'];
 
 var _k8sRecs = [], _dockerRecs = [], _selectedTab = 'overview', _canViewApprovals = true, _canViewPods = true, _canViewContainers = true, _canApprove = true;
 var _prevStats = {heals:0,calls:0,rollbacks:0,pdb:0,errors:0};
@@ -2509,6 +2559,7 @@ function switchTab(name) {
   if (prev === 'metrics' && name !== 'metrics') destroyAllMetricCharts();
   if (name === 'metrics' && _lastMetricsData) { setTimeout(function(){buildAllMetricCharts(_lastMetricsData, _lastDiagsData);}, 50); }
   if (name === 'dr') { setTimeout(loadDR, 60); }
+  if (name === 'scaling') { startScalingPoll(); } else { stopScalingPoll(); }
  }
 (function(){var h=location.hash.replace('#','');if(VALID_TABS.includes(h))switchTab(h);})();
 document.querySelectorAll('#panel-metrics .range-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#panel-metrics .range-btn').forEach(function(x){x.classList.remove('active');});b.classList.add('active');_metricsTimeRange=b.dataset.range;if(_lastMetricsData)buildAllMetricCharts(_lastMetricsData,_lastDiagsData);});});
@@ -2870,6 +2921,124 @@ function confirmDrRestore() {
   });
 }
 
+// ── Healix Scaler tab ────────────────────────────────────────────────────────
+var _scalingTimer = null;
+
+function startScalingPoll() {
+  stopScalingPoll();
+  loadScaling();
+  _scalingTimer = setInterval(loadScaling, 5000);
+}
+
+function stopScalingPoll() {
+  if (_scalingTimer) { clearInterval(_scalingTimer); _scalingTimer = null; }
+}
+
+function loadScaling() {
+  fetch('/scaling/status').then(function(r){ if (r.status === 401) return null; return r.json(); }).then(function(d){
+    if (!d) return;
+    var tab = document.getElementById('scaling-tab'), mtab = document.getElementById('m-scaling-tab');
+    var note = document.getElementById('sc-disabled-note');
+    if (!d.enabled) {
+      if (tab) tab.style.display = 'none';
+      if (mtab) mtab.style.display = 'none';
+      if (note) note.style.display = '';
+      if (_selectedTab === 'scaling') switchTab('overview');
+      return;
+    }
+    if (tab) tab.style.display = '';
+    if (mtab) mtab.style.display = '';
+    if (note) note.style.display = 'none';
+
+    var running = d.engine === 'running';
+    var badge = document.getElementById('sc-engine-badge');
+    if (badge) {
+      badge.textContent = running ? 'engine: running' : 'engine: stopped';
+      badge.className = 'dr-pill ' + (running ? 'ok' : 'bad');
+    }
+    var banner = document.getElementById('sc-error-banner');
+    if (banner) banner.style.display = running ? 'none' : '';
+    if (!running) {
+      var det = document.getElementById('sc-error-detail');
+      if (det) det.textContent = 'Engine stopped — restart the agent or check logs for scale_engine errors.';
+    }
+
+    var rules = d.rules || [];
+    document.getElementById('sc-stat-rules').textContent = rules.length;
+    document.getElementById('sc-stat-poll').textContent = (d.poll_interval_sec || 0) + 's';
+    var ups = 0, downs = 0;
+    rules.forEach(function(r){ ups += r.count_up || 0; downs += r.count_down || 0; });
+    document.getElementById('sc-stat-up').textContent = ups;
+    document.getElementById('sc-stat-down').textContent = downs;
+
+    var tb = document.getElementById('sc-rules-body');
+    if (tb) {
+      if (!rules.length) {
+        tb.innerHTML = '<tr><td colspan="8" class="dr-empty">No rules loaded — add rules to scale_rules.yaml</td></tr>';
+      } else {
+        tb.innerHTML = rules.map(function(r){
+          return '<tr>'
+            + '<td><strong>' + esc(r.name) + '</strong><div style="font-size:11px;color:var(--text3)">' + esc(r.namespace) + '/' + esc(r.deployment) + '</div></td>'
+            + '<td><span class="dr-pill info">' + esc(r.source) + '</span></td>'
+            + '<td>' + (r.metric === null || r.metric === undefined ? '&mdash;' : esc(String(r.metric))) + '</td>'
+            + '<td>' + esc(String(r.target)) + '</td>'
+            + '<td>' + (r.desired === null || r.desired === undefined ? '&mdash;' : r.desired) + '</td>'
+            + '<td>' + (r.actual === null || r.actual === undefined ? '&mdash;' : r.actual) + '</td>'
+            + '<td>' + scStatePill(r) + '</td>'
+            + '<td>' + (r.paused
+                ? '<button class="dr-restore-btn" onclick="scToggle(\'' + esc(r.name) + '\',false)">Resume</button>'
+                : '<button class="dr-restore-btn" onclick="scToggle(\'' + esc(r.name) + '\',true)">Pause</button>') + '</td>'
+            + '</tr>';
+        }).join('');
+      }
+    }
+
+    var eb = document.getElementById('sc-events-body');
+    if (eb) {
+      var evs = d.events || [];
+      if (!evs.length) {
+        eb.innerHTML = '<tr><td colspan="5" class="dr-empty">No scaling events yet</td></tr>';
+      } else {
+        eb.innerHTML = evs.map(function(e){
+          var change = (e.from !== null && e.from !== undefined && e.to !== null && e.to !== undefined)
+            ? e.from + ' → ' + e.to : '&mdash;';
+          return '<tr><td>' + esc(e.ts || '') + '</td>'
+            + '<td>' + esc(e.rule || '') + '</td>'
+            + '<td>' + change + '</td>'
+            + '<td>' + esc(e.reason || '') + '</td>'
+            + '<td><span class="dr-pill ' + (e.mode === 'approval' ? 'warn' : 'info') + '">' + esc(e.mode || '') + '</span></td></tr>';
+        }).join('');
+      }
+    }
+  }).catch(function(){});
+}
+
+function scStatePill(r) {
+  var s = (r.state || '').toLowerCase();
+  var label = s.replace(/_/g, ' ');
+  var cls = 'info';
+  if (s === 'steady' || s === 'zero' || s === 'scaling_up' || s === 'scaling_down') cls = 'ok';
+  else if (s === 'cooldown' || s === 'awaiting_approval' || s === 'pdb_blocked' || s === 'unverified') cls = 'warn';
+  else if (s === 'source_down' || s === 'error' || s === 'conflict' || s === 'failed') cls = 'bad';
+  else if (s === 'paused') cls = 'info';
+  var extra = '';
+  if (s === 'cooldown' && r.cooldown_left) extra = ' ' + r.cooldown_left + 's';
+  if (s === 'conflict' && r.conflict) extra = ' (' + r.conflict + ')';
+  if (s === 'at_max') extra = ' (' + r.max + ')';
+  if (r.source_error && s !== 'source_down') extra = ' (source down)';
+  return '<span class="dr-pill ' + cls + '">' + esc(label + extra) + '</span>';
+}
+
+function scToggle(name, pause) {
+  fetch((pause ? '/scaling/pause/' : '/scaling/resume/') + encodeURIComponent(name), {method:'POST'})
+    .then(function(r){ return r.json().then(function(j){ return {s:r.status, j:j}; }); })
+    .then(function(x){
+      if (x.s !== 200) showToast('Scaler rule', (x.j && x.j.error) || 'error', 'rejected');
+      else showToast('Scaler rule', (pause ? 'paused ' : 'resumed ') + name, 'auto_healed');
+      loadScaling();
+    }).catch(function(){});
+}
+
 function renderActivityFeed(recs) {
   var el=document.getElementById('activity-feed');
   if(!el)return;
@@ -3047,7 +3216,7 @@ function renderDiagnoses(recs) {
 function rateClass(r){return r>=95?'rate-good':r>=70?'rate-warn':'rate-bad';}
 function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):'';}
 function statusBadge(s){s=(s||'').toLowerCase();if(s.indexOf('oom')!==-1)return '<span class="badge badge-oom">OOM</span>';if(s.indexOf('crashloop')!==-1||s.indexOf('restartloop')!==-1)return '<span class="badge badge-crash">CrashLoop</span>';if(s.indexOf('error')!==-1||s.indexOf('failed')!==-1||s.indexOf('critical')!==-1)return '<span class="badge badge-error">Error</span>';if(s.indexOf('running')!==-1||s.indexOf('resolved')!==-1)return '<span class="badge badge-healed">Running</span>';return s?'<span class="badge badge-other">'+esc(s)+'</span>':'';}
-function routeBadge(r){r=(r||'').toLowerCase();if(r==='auto_healed')return '<span class="badge badge-healed">healed</span>';if(r==='dev_issue')return '<span class="badge badge-dev">dev</span>';if(r==='rollback')return '<span class="badge badge-rollback">rollback</span>';if(r==='needs_escalation')return '<span class="badge badge-escalate">escalation</span>';if(r==='needs_approval')return '<span class="badge badge-approval">needs approval</span>';if(r==='rejected')return '<span class="badge badge-rejected">rejected</span>';if(r==='removed')return '<span class="badge badge-removed">removed</span>';return '<span class="badge badge-other">'+esc(r)+'</span>';}
+function routeBadge(r){r=(r||'').toLowerCase();if(r==='auto_healed')return '<span class="badge badge-healed">healed</span>';if(r==='dev_issue')return '<span class="badge badge-dev">dev</span>';if(r==='rollback')return '<span class="badge badge-rollback">rollback</span>';if(r==='needs_escalation')return '<span class="badge badge-escalate">escalation</span>';if(r==='needs_approval')return '<span class="badge badge-approval">needs approval</span>';if(r==='rejected')return '<span class="badge badge-rejected">rejected</span>';if(r==='removed')return '<span class="badge badge-removed">removed</span>';if(r==='scaled')return '<span class="badge badge-scaled">scaled</span>';return '<span class="badge badge-other">'+esc(r)+'</span>';}
 function platformBadge(p){if(p==='dr')return '<span class="badge badge-k8s" style="background:rgba(188,140,255,0.15);color:var(--purple,#bc8cff)">DR</span>';return p==='k8s'?'<span class="badge badge-k8s">K8s</span>':'<span class="badge badge-docker">Docker</span>';}
 function isCritical(s){s=(s||'').toLowerCase();return s.indexOf('oom')!==-1||s.indexOf('crashloop')!==-1||s.indexOf('restartloop')!==-1;}
 
@@ -5366,7 +5535,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
             if not _validate_session(cookie):
                 self._respond(401, {"error": "unauthorized"})
                 return
-            body = metrics.to_prometheus_text().encode()
+            body = (metrics.to_prometheus_text() + scale_engine.prometheus_lines()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; version=0.0.4")
             self.send_header("Content-Length", str(len(body)))
@@ -5455,6 +5624,13 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 self._respond(401, {"error": "unauthorized"})
                 return
             self._respond(200, dr_module.get_status())
+
+        elif self.path == "/scaling/status" and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            if not _validate_session(cookie):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            self._respond(200, scale_engine.get_status())
 
         elif self.path == "/dr/backups" and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")
@@ -5766,6 +5942,23 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/chat" and METRICS_ENABLED:
             _handle_chat(self)
+
+        elif (self.path.startswith("/scaling/pause/") or
+              self.path.startswith("/scaling/resume/")) and METRICS_ENABLED:
+            cookie = self.headers.get("Cookie", "")
+            session = _validate_session(cookie)
+            if not session or not session["perms"].get("can_admin", False):
+                self._respond(401, {"error": "unauthorized"})
+                return
+            pausing = self.path.startswith("/scaling/pause/")
+            rule_name = urllib.parse.unquote(self.path.split("/", 3)[3])
+            fn = scale_engine.pause_rule if pausing else scale_engine.resume_rule
+            if fn(rule_name):
+                log.info("Scaler rule %s by %s", "paused" if pausing else "resumed",
+                         session.get("username", "?"))
+                self._respond(200, {"ok": True, "rule": rule_name})
+            else:
+                self._respond(404, {"error": f"unknown rule: {rule_name}"})
 
         elif self.path == "/dr/backup" and METRICS_ENABLED:
             cookie = self.headers.get("Cookie", "")

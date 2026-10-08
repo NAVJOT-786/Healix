@@ -818,11 +818,37 @@ def run() -> None:
             f"standby={config.DR_STANDBY_CONTEXT or '(none)'}"
         )
 
+    # ── Healix Scaler (event-driven, KEDA-style scaling) ────────────
+    if config.SCALE_ENABLED:
+        if config.ENABLE_K8S and v1:
+            import scale_engine
+            scale_engine.configure(
+                storage=storage,
+                approval_store=approval_store if config.APPROVAL_MODE else None,
+                circuit_breaker=circuit_breaker,
+                v1=v1,
+                apps_v1=apps_v1,
+            )
+            if scale_engine.start():
+                console.print(
+                    "[green]✓[/green] Healix Scaler enabled — "
+                    f"{len(config.SCALE_RULES)} rule(s), poll {config.SCALE_POLL_INTERVAL_SEC}s"
+                )
+            else:
+                console.print("[yellow]![/yellow] Healix Scaler enabled but not started — check scale_rules.yaml")
+        else:
+            console.print("[yellow]![/yellow] Healix Scaler requires K8s (ENABLE_K8S)")
+
     # Graceful shutdown
     def _shutdown(sig, frame):
         log.info("Received signal %s — shutting down", sig)
         if event_watcher:
             event_watcher.stop()
+        try:
+            import scale_engine
+            scale_engine.stop()
+        except Exception:
+            pass
         sys.exit(0)
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
@@ -933,6 +959,7 @@ def run() -> None:
             f"[dim]Last checked: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
             f" — next check in {config.POLL_INTERVAL_SEC}s[/dim]\n"
         )
+        heartbeat()  # refresh at pass end — a long pass must not look like a hang
         time.sleep(config.POLL_INTERVAL_SEC)
 
 

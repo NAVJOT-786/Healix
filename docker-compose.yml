@@ -44,6 +44,8 @@ services:
       - ENABLE_DOCKER=true
       - ENABLE_K8S=true
       - WATCHDOG_INTERVAL_SEC=10
+      - WATCHDOG_HEALTH_URL=http://localhost:9990/health
+      - WATCHDOG_STALE_MAX=6
       - AGENT_MARKER_DIR=/tmp
       - DATABASE_URL=postgresql://healer:healer@localhost:5432/healer
 
@@ -79,5 +81,26 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ── Prometheus (real one — port 9090 on the host is Cockpit) ──────
+  # Attached to the external `kind` network so it can scrape nodes by
+  # container DNS name (healix-primary-control-plane:8080 / :9101).
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    container_name: healix-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    networks:
+      - default
+      - kind
+
 volumes:
   pgdata:
+  prom-data:
+
+networks:
+  kind:
+    external: true

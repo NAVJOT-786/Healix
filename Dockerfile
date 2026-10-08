@@ -10,7 +10,7 @@ RUN apt-get update && \
 # Install Python dependencies first (layer cache)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
+RUN pip install --no-cache-dir awscli
 # Copy agent code (modular v9)
 COPY config.py .
 COPY providers.py .
@@ -30,6 +30,9 @@ COPY email_reader.py .
 COPY storage.py .
 COPY dr.py .
 COPY circuit_breaker.py .
+COPY scale_engine.py .
+COPY scalers/ scalers/
+COPY scale_rules.yaml .
 COPY agent.py .
 COPY watchdog.sh .
 RUN chmod +x watchdog.sh
