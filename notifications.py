@@ -16,7 +16,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from config import (
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM,
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_TIMEOUT_SEC, EMAIL_FROM,
     DEV_EMAILS, OPS_EMAILS, DRY_RUN,
     N8N_WEBHOOK_URL, N8N_TIMEOUT_SEC, APPROVAL_DASHBOARD_URL,
     SLACK_ENABLED, SLACK_WEBHOOK_URL, SLACK_TIMEOUT_SEC,
@@ -40,7 +40,7 @@ def _smtp_send(recipients: list[str], msg: MIMEMultipart, label: str) -> None:
         if DRY_RUN:
             log.info("[DRY RUN] Would send %s email to: %s", label, ", ".join(recipients))
             return
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT_SEC) as server:
             server.ehlo()
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
