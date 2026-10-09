@@ -7,3 +7,4 @@ docker
 psycopg2-binary
 bcrypt
 fpdf2
+pyyaml

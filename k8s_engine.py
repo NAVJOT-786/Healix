@@ -26,20 +26,33 @@ log = logging.getLogger("k8s_engine")
 #  CLIENT INIT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def init_k8s() -> tuple[client.CoreV1Api | None, client.AppsV1Api | None]:
-    try:
-        config.load_incluster_config()
-        log.info("Using in-cluster kubeconfig")
-    except config.ConfigException:
+def init_k8s(context: str = "") -> tuple[client.CoreV1Api | None, client.AppsV1Api | None]:
+    if context:
+        # Per-context clients (Cloud DR primary/standby clusters)
         try:
-            config.load_kube_config()
-            log.info("Using local kubeconfig")
+            cfg = client.Configuration()
+            config.load_kube_config(context=context, client_configuration=cfg)
+            api_client = client.ApiClient(cfg)
+            log.info("Using kubeconfig context: %s", context)
         except Exception as e:
-            log.error("Could not load kubeconfig: %s", e)
+            log.error("Could not load kubeconfig context %s: %s", context, e)
             return None, None
+        v1 = client.CoreV1Api(api_client)
+        apps_v1 = client.AppsV1Api(api_client)
+    else:
+        try:
+            config.load_incluster_config()
+            log.info("Using in-cluster kubeconfig")
+        except config.ConfigException:
+            try:
+                config.load_kube_config()
+                log.info("Using local kubeconfig")
+            except Exception as e:
+                log.error("Could not load kubeconfig: %s", e)
+                return None, None
 
-    v1 = client.CoreV1Api()
-    apps_v1 = client.AppsV1Api()
+        v1 = client.CoreV1Api()
+        apps_v1 = client.AppsV1Api()
 
     try:
         v1.list_namespace(_request_timeout=5)
@@ -156,6 +169,55 @@ def derive_deployment_from_pod(
     return ""
 
 
+def _resolve_deployment(
+    v1: client.CoreV1Api,
+    apps_v1: client.AppsV1Api,
+    namespace: str,
+    params: dict,
+) -> str:
+    """Resolve the target Deployment authoritatively.
+
+    Order:
+      1. Derive from the pod's owner refs (ground truth) whenever pod_name is known.
+      2. Only if that fails, fall back to params["deployment"] AFTER validating it
+         exists — LLM-provided names are untrusted (the model often builds them by
+         stripping the pod-name suffix, which yields the ReplicaSet hash name).
+    Returns "" when no valid deployment is found.
+    """
+    pod_name = params.get("pod_name", "")
+    if pod_name:
+        dep = derive_deployment_from_pod(v1, apps_v1, namespace, pod_name)
+        if dep:
+            return dep
+    supplied = (params.get("deployment") or "").strip()
+    if supplied:
+        try:
+            apps_v1.read_namespaced_deployment(name=supplied, namespace=namespace)
+            return supplied
+        except Exception as e:
+            log.warning(
+                "Ignoring unverified deployment '%s' in %s: %s", supplied, namespace, e,
+            )
+    return ""
+
+
+def _dep_missing_message(v1: client.CoreV1Api, namespace: str, params: dict) -> str:
+    """Explain why no deployment could be resolved, distinguishing bare pods."""
+    pod_name = params.get("pod_name", "")
+    if pod_name:
+        try:
+            pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+            if not (pod.metadata.owner_references or []):
+                return (
+                    "Cannot patch resources on standalone (bare) pod — no owning "
+                    "Deployment/StatefulSet; recreate it as a Deployment. "
+                    "Manual intervention required."
+                )
+        except Exception:
+            pass
+    return "Cannot determine deployment name — manual intervention required."
+
+
 def get_deployment_resource_limits(
     apps_v1: client.AppsV1Api, namespace: str, deployment_name: str,
 ) -> dict:
@@ -224,12 +286,10 @@ def execute_action_k8s(
         return f"Pod {pod_name} deleted and will be recreated by the Deployment."
 
     elif action == "scale_deployment":
-        dep = params.get("deployment", "")
+        dep = _resolve_deployment(v1, apps_v1, ns, params)
         reps = int(params.get("replicas", 1))
         if not dep:
-            dep = derive_deployment_from_pod(v1, apps_v1, ns, params.get("pod_name", ""))
-        if not dep:
-            return "Cannot determine deployment name — manual intervention required."
+            return _dep_missing_message(v1, ns, params)
         if not DRY_RUN:
             apps_v1.patch_namespaced_deployment_scale(
                 name=dep, namespace=ns, body={"spec": {"replicas": reps}},
@@ -238,12 +298,10 @@ def execute_action_k8s(
         return f"Deployment {dep} scaled to {reps} replicas."
 
     elif action == "bounce_deployment":
-        dep = params.get("deployment", "")
+        dep = _resolve_deployment(v1, apps_v1, ns, params)
         orig = int(params.get("replicas", 1))
         if not dep:
-            dep = derive_deployment_from_pod(v1, apps_v1, ns, params.get("pod_name", ""))
-        if not dep:
-            return "Cannot determine deployment name — manual intervention required."
+            return _dep_missing_message(v1, ns, params)
         if not DRY_RUN:
             apps_v1.patch_namespaced_deployment_scale(
                 name=dep, namespace=ns, body={"spec": {"replicas": 0}},
@@ -256,13 +314,11 @@ def execute_action_k8s(
         return f"Deployment {dep} bounced: scaled to 0 then back to {orig}."
 
     elif action == "increase_memory_limit":
-        dep = params.get("deployment", "")
+        dep = _resolve_deployment(v1, apps_v1, ns, params)
         container = params.get("container", dep)
         new_memory = params.get("memory_limit", "512Mi")
         if not dep:
-            dep = derive_deployment_from_pod(v1, apps_v1, ns, params.get("pod_name", ""))
-        if not dep:
-            return "Cannot determine deployment name — manual intervention required."
+            return _dep_missing_message(v1, ns, params)
 
         # Multi-container: validate container name exists
         if container and not validate_container_in_deployment(

@@ -108,6 +108,19 @@ class StorageBackend:
                 CREATE INDEX IF NOT EXISTS idx_diagnoses_deleted ON diagnoses(deleted);
                 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
                 CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_id);
+                CREATE TABLE IF NOT EXISTS dr_backups (
+                    id             TEXT PRIMARY KEY,
+                    created_at     TIMESTAMPTZ DEFAULT NOW(),
+                    cluster        TEXT,
+                    namespaces     TEXT,
+                    resource_count INTEGER,
+                    payload        TEXT,
+                    bytes          INTEGER,
+                    status         TEXT DEFAULT 'completed',
+                    created_by     TEXT DEFAULT 'system',
+                    label          TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_dr_backups_created ON dr_backups(created_at DESC);
             """)
             conn.commit()
 
@@ -203,6 +216,89 @@ class StorageBackend:
             ))
             conn.commit()
             return uid
+        finally:
+            self._put(conn)
+
+    # ── Cloud Disaster Recovery backups ──────────────────────────
+
+    def record_backup(self, *, backup_id: str, cluster: str, namespaces: str,
+                      resource_count: int, payload: str, byte_size: int,
+                      created_by: str = "system", label: str = "") -> dict:
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO dr_backups
+                    (id, cluster, namespaces, resource_count, payload,
+                     bytes, created_by, label)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at, cluster, namespaces,
+                          resource_count, bytes, created_by, label, status
+            """, (backup_id, cluster, namespaces, resource_count, payload,
+                  byte_size, created_by, label))
+            row = cur.fetchone()
+            conn.commit()
+            keys = ["id", "created_at", "cluster", "namespaces",
+                    "resource_count", "bytes", "created_by", "label", "status"]
+            return dict(zip(keys, row))
+        finally:
+            self._put(conn)
+
+    def list_backups(self, limit: int = 50) -> list[dict]:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT id, created_at, cluster, namespaces, resource_count,
+                       bytes, created_by, label, status
+                FROM dr_backups ORDER BY created_at DESC LIMIT %s
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._put(conn)
+
+    def get_backup(self, backup_id: str) -> dict | None:
+        conn = self._conn()
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM dr_backups WHERE id = %s", (backup_id,))
+            r = cur.fetchone()
+            return dict(r) if r else None
+        finally:
+            self._put(conn)
+
+    def latest_backup_at(self):
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT created_at FROM dr_backups ORDER BY created_at DESC LIMIT 1")
+            row = cur.fetchone()
+            return row[0] if row else None
+        finally:
+            self._put(conn)
+
+    def backup_count(self) -> int:
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM dr_backups")
+            return cur.fetchone()[0]
+        finally:
+            self._put(conn)
+
+    def prune_backups(self, keep: int = 20) -> int:
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM dr_backups WHERE id IN (
+                    SELECT id FROM dr_backups
+                    ORDER BY created_at DESC OFFSET %s
+                )
+            """, (max(keep, 1),))
+            deleted = cur.rowcount
+            conn.commit()
+            return deleted
         finally:
             self._put(conn)
 

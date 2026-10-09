@@ -138,9 +138,12 @@ AMBIGUITY RULE: If you are unsure whether this is a developer issue or
 infrastructure issue, set action: describe_diagnosis and explain both
 possibilities in the recommendation field. Do NOT guess.
 
-DEPLOYMENT NAME: The deployment field should be derived from pod owner
-references (Pod -> ReplicaSet -> Deployment). If you cannot determine it,
-leave deployment empty and the agent will derive it automatically.
+DEPLOYMENT NAME: NEVER construct or guess the deployment field — in particular,
+do NOT derive it by stripping the pod-name suffix (that yields the ReplicaSet
+hash name, e.g. "oom-test-deployment-659dd7bf8f", which is WRONG and causes
+404 errors). Always leave deployment as "" unless the incident context
+explicitly states the deployment name; the engine derives it automatically
+and authoritatively from pod owner references.
 """
 
 

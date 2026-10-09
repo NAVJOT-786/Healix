@@ -15,7 +15,8 @@
 set -euo pipefail
 
 INTERVAL="${WATCHDOG_INTERVAL_SEC:-10}"
-HEALTH_URL="${WATCHDOG_HEALTH_URL:-http://localhost:8080/health}"
+HEALTH_URL="${WATCHDOG_HEALTH_URL:-http://localhost:9990/health}"
+STALE_MAX="${WATCHDOG_STALE_MAX:-3}"
 MARKER_DIR="${AGENT_MARKER_DIR:-/tmp}"
 AGENT_MARKER="${MARKER_DIR}/.ai-healer-self-healed"
 AGENT_PID_FILE="${MARKER_DIR}/.ai-healer.pid"
@@ -127,14 +128,29 @@ fi
 
 log "Watchdog entering monitor loop"
 
+fail_count=0
+
 while true; do
     sleep "$INTERVAL"
 
-    if check_agent; then
-        # Agent is healthy — nothing to do
-        :
-    else
+    if ! check_agent; then
         log "Agent process not found — triggering self-heal"
+        fail_count=0
         restart_agent
+        continue
+    fi
+
+    # Process is alive, but the main loop may be hung (e.g. a socket read
+    # without timeout). /health flips to 503 after 120s without heartbeat.
+    health="$(curl -sf -m 3 "$HEALTH_URL" 2>/dev/null || true)"
+    if echo "$health" | grep -q '"healthy"'; then
+        fail_count=0
+    else
+        fail_count=$((fail_count + 1))
+        log "Agent heartbeat STALE check $fail_count/$STALE_MAX (health: ${health:-no response})"
+        if [ "$fail_count" -ge "$STALE_MAX" ]; then
+            fail_count=0
+            restart_agent
+        fi
     fi
 done

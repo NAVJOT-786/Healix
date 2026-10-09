@@ -1,0 +1,66 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "test-auto-healed",
+    "namespace": "demo"
+  },
+  "spec": {
+    "progressDeadlineSeconds": 600,
+    "replicas": 1,
+    "revisionHistoryLimit": 10,
+    "selector": {
+      "matchLabels": {
+        "app": "test-auto-healed"
+      }
+    },
+    "strategy": {
+      "rollingUpdate": {
+        "maxSurge": "25%",
+        "maxUnavailable": "25%"
+      },
+      "type": "RollingUpdate"
+    },
+    "template": {
+      "metadata": {
+        "creationTimestamp": null,
+        "labels": {
+          "app": "test-auto-healed"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "args": [
+              "echo \"Starting memory intensive process...\"\necho \"Allocating large buffer for data processing...\"\ntail /dev/zero\n"
+            ],
+            "command": [
+              "sh",
+              "-c"
+            ],
+            "image": "busybox:1.35",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "test-auto-healed",
+            "resources": {
+              "limits": {
+                "cpu": "50m",
+                "memory": "256Gi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "10Mi"
+              }
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File"
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "terminationGracePeriodSeconds": 30
+      }
+    }
+  }
+}

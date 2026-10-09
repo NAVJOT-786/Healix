@@ -70,7 +70,7 @@ class EmailReplyReader:
 
         mail = None
         try:
-            mail = imaplib.IMAP4_SSL(self._host, self._port)
+            mail = imaplib.IMAP4_SSL(self._host, self._port, timeout=30)
             mail.login(self._user, self._password)
             mail.select("INBOX")
 

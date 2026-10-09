@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "scaler-loadgen-code",
+    "namespace": "demo"
+  },
+  "data": {
+    "loadgen.py": "import json\nfrom http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\nfrom urllib.parse import urlparse, parse_qs\n\nPENDING = {\"n\": 0}\n\nclass H(BaseHTTPRequestHandler):\n    def log_message(self, *a):\n        pass\n\n    def _send(self, code, body, ctype=\"text/plain\"):\n        data = body.encode()\n        self.send_response(code)\n        self.send_header(\"Content-Type\", ctype)\n        self.send_header(\"Content-Length\", str(len(data)))\n        self.end_headers()\n        self.wfile.write(data)\n\n    def do_GET(self):\n        u = urlparse(self.path)\n        q = parse_qs(u.query)\n        if u.path == \"/metrics\":\n            self._send(200,\n                \"# HELP demo_pending_work Items waiting to be processed\\n\"\n                \"# TYPE demo_pending_work gauge\\n\"\n                'demo_pending_work{namespace=\"demo\"} %d\\n' % PENDING[\"n\"])\n        elif u.path == \"/work/add\":\n            try:\n                PENDING[\"n\"] += int(q.get(\"items\", [\"10\"])[0])\n            except ValueError:\n                pass\n            self._send(200, str(PENDING[\"n\"]))\n        elif u.path == \"/work/take\":\n            try:\n                take = int(q.get(\"items\", [\"2\"])[0])\n            except ValueError:\n                take = 2\n            PENDING[\"n\"] = max(0, PENDING[\"n\"] - take)\n            self._send(200, str(PENDING[\"n\"]))\n        else:\n            self._send(404, \"not found\")\n\nThreadingHTTPServer((\"0.0.0.0\", 9101), H).serve_forever()\n"
+  }
+}

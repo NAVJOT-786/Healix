@@ -106,12 +106,21 @@ PROMETHEUS_TIMEOUT_SEC = int(os.getenv("PROMETHEUS_TIMEOUT_SEC", "5"))
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_TIMEOUT_SEC = int(os.getenv("N8N_TIMEOUT_SEC", "5"))
 
+# ── Slack ─────────────────────────────────────────────────────────────────────
+
+SLACK_ENABLED     = os.getenv("SLACK_ENABLED", "false").lower() == "true"
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+SLACK_TIMEOUT_SEC = int(os.getenv("SLACK_TIMEOUT_SEC", "5"))
+SLACK_USERNAME    = os.getenv("SLACK_USERNAME", "Healix")
+SLACK_ICON_EMOJI  = os.getenv("SLACK_ICON_EMOJI", ":robot_face:")
+
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_TIMEOUT_SEC = int(os.getenv("SMTP_TIMEOUT_SEC", "30"))
 EMAIL_FROM    = os.getenv("EMAIL_FROM", SMTP_USER)
 
 _DEV_EMAILS_RAW = os.getenv(
@@ -190,6 +199,73 @@ CIRCUIT_BREAKER_ENABLED    = os.getenv("CIRCUIT_BREAKER_ENABLED", "true").lower(
 CIRCUIT_BREAKER_THRESHOLD  = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "3"))
 CIRCUIT_BREAKER_WINDOW_MIN = int(os.getenv("CIRCUIT_BREAKER_WINDOW_MIN", "60"))
 CIRCUIT_BREAKER_COOLDOWN_MIN = int(os.getenv("CIRCUIT_BREAKER_COOLDOWN_MIN", "1440"))
+
+
+# ── Cloud Disaster Recovery ──────────────────────────────────────────────────
+
+DR_ENABLED             = os.getenv("DR_ENABLED", "false").lower() == "true"
+DR_PRIMARY_CONTEXT     = os.getenv("DR_PRIMARY_CONTEXT", "").strip()
+DR_STANDBY_CONTEXT     = os.getenv("DR_STANDBY_CONTEXT", "").strip()
+DR_BACKUP_AUTO         = os.getenv("DR_BACKUP_AUTO", "true").lower() == "true"
+DR_BACKUP_INTERVAL_SEC = int(os.getenv("DR_BACKUP_INTERVAL_SEC", "21600"))
+DR_BACKUP_SECRETS      = os.getenv("DR_BACKUP_SECRETS", "true").lower() == "true"
+DR_MAX_BACKUPS         = int(os.getenv("DR_MAX_BACKUPS", "20"))
+DR_DISASTER_FAIL_CYCLES = int(os.getenv("DR_DISASTER_FAIL_CYCLES", "3"))
+DR_VERIFY_TIMEOUT_SEC  = int(os.getenv("DR_VERIFY_TIMEOUT_SEC", "45"))
+DR_PAYLOAD_MAX_BYTES   = int(os.getenv("DR_PAYLOAD_MAX_BYTES", str(10 * 1024 * 1024)))
+VELERO_ENABLED         = os.getenv("VELERO_ENABLED", "false").lower() == "true"
+
+
+# ── Healix Scaler (event-driven, KEDA-style replica scaling) ────────────────
+
+SCALE_ENABLED           = os.getenv("SCALE_ENABLED", "false").lower() == "true"
+SCALE_POLL_INTERVAL_SEC = max(5, int(os.getenv("SCALE_POLL_INTERVAL_SEC", "15")))
+SCALE_RULES_PATH        = os.getenv("SCALE_RULES_PATH", "scale_rules.yaml")
+SCALE_VERIFY_TIMEOUT_SEC = int(os.getenv("SCALE_VERIFY_TIMEOUT_SEC", "30"))
+
+
+def load_scale_rules(path: str | None = None) -> list[dict]:
+    """Load and validate scale rules from YAML (KEDA ScaledObject equivalent)."""
+    import logging
+    _log = logging.getLogger("config")
+    p = path or SCALE_RULES_PATH
+    try:
+        import yaml
+    except ImportError:
+        _log.error("pyyaml not installed — cannot load %s", p)
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        _log.warning("Scale rules file not found: %s", p)
+        return []
+    except Exception as e:
+        _log.error("Failed to parse %s: %s", p, e)
+        return []
+    rules = data.get("rules") or []
+    valid: list[dict] = []
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        missing = [k for k in ("name", "namespace", "deployment", "triggers") if not r.get(k)]
+        if missing:
+            _log.warning("Scale rule %s missing %s — skipped", r.get("name", "?"), missing)
+            continue
+        r.setdefault("minReplicas", 1)
+        r.setdefault("maxReplicas", 5)
+        r.setdefault("pollingIntervalSec", SCALE_POLL_INTERVAL_SEC)
+        r.setdefault("cooldownSec", 300)
+        r.setdefault("scaleUpStepMax", 3)
+        r.setdefault("requireApproval", False)
+        if int(r["minReplicas"]) > int(r["maxReplicas"]):
+            _log.warning("Scale rule %s: minReplicas > maxReplicas — skipped", r["name"])
+            continue
+        valid.append(r)
+    return valid
+
+
+SCALE_RULES = load_scale_rules() if SCALE_ENABLED else []
 
 
 def validate() -> list[str]:

@@ -1,0 +1,68 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "scaler-loadgen",
+    "namespace": "demo",
+    "labels": {
+      "app": "scaler-loadgen"
+    }
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "scaler-loadgen"
+      }
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "scaler-loadgen"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "loadgen",
+            "image": "python:3.12-alpine",
+            "command": [
+              "python3",
+              "/code/loadgen.py"
+            ],
+            "ports": [
+              {
+                "containerPort": 9101,
+                "hostPort": 9101
+              }
+            ],
+            "volumeMounts": [
+              {
+                "name": "code",
+                "mountPath": "/code"
+              }
+            ],
+            "resources": {
+              "requests": {
+                "cpu": "50m",
+                "memory": "64Mi"
+              },
+              "limits": {
+                "cpu": "200m",
+                "memory": "128Mi"
+              }
+            }
+          }
+        ],
+        "volumes": [
+          {
+            "name": "code",
+            "configMap": {
+              "name": "scaler-loadgen-code"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

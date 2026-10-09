@@ -1,0 +1,58 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Healix Scaler rules — the KEDA ScaledObject equivalent for Healix.
+#
+#   desired_replicas = ceil(metric / targetPerPod)
+#   clamped to [minReplicas, maxReplicas]
+#   scale-ups bounded by scaleUpStepMax per cycle (immediate)
+#   scale-downs only after cooldownSec of a sustained low metric
+#   (which also governs scale-to-zero)
+#
+# Secrets are never stored here — queries read from Prometheus, which has
+# already authenticated to the sources.
+# ──────────────────────────────────────────────────────────────────────────────
+
+rules:
+  - name: demo-worker
+    namespace: demo
+    deployment: scaler-worker
+    minReplicas: 0
+    maxReplicas: 8
+    pollingIntervalSec: 10
+    cooldownSec: 60
+    scaleUpStepMax: 3
+    requireApproval: false
+    triggers:
+      - type: prometheus
+        query: 'demo_pending_work{namespace="demo"}'
+        targetPerPod: 50        # 1 replica per 50 pending items
+        activationThreshold: 1  # wake from zero when backlog >= 1
+
+  - name: web-frontend
+    namespace: demo
+    deployment: app-frontend
+    minReplicas: 1              # HTTP service — never scale to zero
+    maxReplicas: 6
+    pollingIntervalSec: 10
+    cooldownSec: 60
+    scaleUpStepMax: 3
+    requireApproval: false
+    triggers:
+      - type: prometheus
+        query: 'sum(rate(container_cpu_usage_seconds_total{container_label_io_kubernetes_pod_namespace="demo",container_label_io_kubernetes_pod_name=~"app-frontend.*",container_label_io_kubernetes_container_name!=""}[30s]))'
+        targetPerPod: 0.2        # 1 pod per 0.2 cores (pod limit 500m)
+        activationThreshold: 0.05  # engage when total CPU >= 50m (idle stays at min)
+
+  - name: api-backend
+    namespace: demo
+    deployment: app-backend
+    minReplicas: 1              # HTTP service — never scale to zero
+    maxReplicas: 4
+    pollingIntervalSec: 10
+    cooldownSec: 60
+    scaleUpStepMax: 2
+    requireApproval: false
+    triggers:
+      - type: prometheus
+        query: 'sum(rate(container_cpu_usage_seconds_total{container_label_io_kubernetes_pod_namespace="demo",container_label_io_kubernetes_pod_name=~"app-backend.*",container_label_io_kubernetes_container_name!=""}[30s]))'
+        targetPerPod: 0.15      # 1 pod per 0.15 cores (pod limit 250m)
+        activationThreshold: 0.05  # engage when total CPU >= 50m (idle stays at min)

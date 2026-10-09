@@ -9,3 +9,5 @@ build/
 .DS_Store
 ai-agents-flow.zip
 n8n/pgdata/
+.env.bak
+*.zip
